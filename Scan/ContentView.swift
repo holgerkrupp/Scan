@@ -20,7 +20,7 @@ struct ContentView: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack { Label("Scanners", systemImage: "scanner").font(.headline); Spacer(); Button { Task { await viewModel.refreshDevices() } } label: { Image(systemName: "arrow.clockwise") }.disabled(viewModel.isRefreshing) }
-            Text("Native S1500/S1500M USB plus Image Capture").font(.caption).foregroundStyle(.secondary)
+            Text("Legacy ScanSnap S500/S510/S1500/iX500 USB plus Image Capture").font(.caption).foregroundStyle(.secondary)
             List(selection: Binding(get: { viewModel.selectedIdentity }, set: { viewModel.selectedIdentity = $0 })) {
                 ForEach(viewModel.discoveredIdentities) { identity in
                     VStack(alignment: .leading, spacing: 3) {

@@ -54,6 +54,24 @@ final class ScanCoreTests: XCTestCase {
         XCTAssertEqual(result.count, 2); XCTAssertTrue(result.contains(native)); XCTAssertFalse(result.contains(imageCaptureDuplicate)); XCTAssertTrue(result.contains(other))
     }
 
+    func testLegacyScanSnapUSBModelsAreClaimedByTheNativeDriver() {
+        let driver = FujitsuScanSnapS1500Driver()
+        let expected: Set<USBDeviceID> = [
+            USBDeviceID(vendorID: 0x04c5, productID: 0x10fe),
+            USBDeviceID(vendorID: 0x04c5, productID: 0x1135),
+            USBDeviceID(vendorID: 0x04c5, productID: 0x1155),
+            USBDeviceID(vendorID: 0x04c5, productID: 0x116f),
+            USBDeviceID(vendorID: 0x04c5, productID: 0x11a2),
+            USBDeviceID(vendorID: 0x04c5, productID: 0x132b)
+        ]
+        XCTAssertEqual(driver.supportedUSBDeviceIDs, expected)
+
+        let ix500 = ScannerIdentity(name: "ScanSnap iX500", manufacturer: "Fujitsu", model: "iX500", serialNumber: nil, connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x132b), locationID: 1)
+        let device = driver.makeDevice(identity: ix500, transport: nil)
+        XCTAssertEqual(device.capabilities.resolutionsDPI, [150, 200, 300, 600])
+        XCTAssertTrue(device.capabilities.supportsDuplex)
+    }
+
     private func makeFrame(pageIndex: Int, blank: Bool, width: Int = 300, height: Int = 400) throws -> PageFrame {
         let image = NSImage(size: NSSize(width: width, height: height)); image.lockFocus(); NSColor.white.setFill(); NSRect(x: 0, y: 0, width: width, height: height).fill(); if !blank { NSColor.black.setFill(); NSRect(x: 30, y: 40, width: width - 60, height: 20).fill() }; image.unlockFocus(); let tiff = try XCTUnwrap(image.tiffRepresentation); let rep = try XCTUnwrap(NSBitmapImageRep(data: tiff)); let data = try XCTUnwrap(rep.representation(using: .jpeg, properties: [.compressionFactor: 0.9])); return PageFrame(pageIndex: pageIndex, side: .front, pixelFormat: .jpeg, width: width, height: height, resolutionDPI: 300, data: data)
     }

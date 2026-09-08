@@ -2,36 +2,47 @@ import AppKit
 import Foundation
 
 struct FujitsuScanSnapS1500Driver: ScannerDriver {
-    let name = "Fujitsu ScanSnap S1500/S1500M"
+    let name = "Fujitsu ScanSnap legacy SCSI-over-USB"
     let supportedUSBDeviceIDs: Set<USBDeviceID> = [
-        USBDeviceID(vendorID: 0x04c5, productID: 0x11a2)
+        // S500/S500M and S510/S510M use the same Fujitsu SCSI-over-USB
+        // transport family as the S1500. These models are no longer listed
+        // in the current ScanSnap macOS software matrix.
+        USBDeviceID(vendorID: 0x04c5, productID: 0x10fe), // S500
+        USBDeviceID(vendorID: 0x04c5, productID: 0x1135), // S500M
+        USBDeviceID(vendorID: 0x04c5, productID: 0x1155), // S510
+        USBDeviceID(vendorID: 0x04c5, productID: 0x116f), // S510M
+        USBDeviceID(vendorID: 0x04c5, productID: 0x11a2), // S1500/S1500M
+        USBDeviceID(vendorID: 0x04c5, productID: 0x132b)  // iX500
     ]
 
     func makeDevice(identity: ScannerIdentity, transport: USBDeviceTransport?) -> ScannerDevice {
-        FujitsuScanSnapS1500Device(identity: identity, transport: transport)
+        FujitsuScanSnapS1500Device(identity: identity, transport: transport, model: .init(identity: identity))
     }
 }
 
 final class FujitsuScanSnapS1500Device: ScannerDevice {
     let identity: ScannerIdentity
-    let capabilities = ScannerCapabilities(
-        sources: [.adfFront, .adfBack, .adfDuplex],
-        colorModes: [.color, .gray, .lineart],
-        resolutionsDPI: [150, 200, 300, 400, 600],
-        supportsBlankPageRemoval: true,
-        supportsDeskew: true,
-        supportsAutoCrop: true,
-        supportsDuplex: true
-    )
+    let capabilities: ScannerCapabilities
 
+    private let model: FujitsuScanSnapModel
     private let transport: USBDeviceTransport?
     private var commandEngine: FujitsuSCSIOverUSBCommandEngine?
     private(set) var status: ScannerStatus = .disconnected
     private var isCancelled = false
 
-    init(identity: ScannerIdentity, transport: USBDeviceTransport?) {
+    init(identity: ScannerIdentity, transport: USBDeviceTransport?, model: FujitsuScanSnapModel = .s1500) {
         self.identity = identity
         self.transport = transport
+        self.model = model
+        capabilities = ScannerCapabilities(
+            sources: [.adfFront, .adfBack, .adfDuplex],
+            colorModes: [.color, .gray, .lineart],
+            resolutionsDPI: model.resolutionsDPI,
+            supportsBlankPageRemoval: true,
+            supportsDeskew: true,
+            supportsAutoCrop: true,
+            supportsDuplex: true
+        )
     }
 
     func open() async throws {
@@ -40,7 +51,7 @@ final class FujitsuScanSnapS1500Device: ScannerDevice {
         }
         ScanTrace.post("Opening \(identity.name).")
         try await transport.open()
-        commandEngine = FujitsuSCSIOverUSBCommandEngine(transport: transport)
+        commandEngine = FujitsuSCSIOverUSBCommandEngine(transport: transport, model: model)
         try await commandEngine?.waitUntilReady()
         if let inquiry = try await commandEngine?.inquiry() {
             ScanTrace.post("Inquiry: \(inquiry.vendor) \(inquiry.product) \(inquiry.version).")
@@ -99,6 +110,44 @@ final class FujitsuScanSnapS1500Device: ScannerDevice {
     }
 }
 
+enum FujitsuScanSnapModel {
+    case s500
+    case s500m
+    case s510
+    case s510m
+    case s1500
+    case ix500
+
+    init(identity: ScannerIdentity) {
+        switch identity.usbDeviceID?.productID {
+        case 0x10fe: self = .s500
+        case 0x1135: self = .s500m
+        case 0x1155: self = .s510
+        case 0x116f: self = .s510m
+        case 0x132b: self = .ix500
+        default: self = .s1500
+        }
+    }
+
+    var resolutionsDPI: [Int] {
+        switch self {
+        case .s500, .s500m, .s510, .s510m, .ix500:
+            [150, 200, 300, 600]
+        case .s1500:
+            [150, 200, 300, 400, 600]
+        }
+    }
+
+    // The iX500 has a Fujitsu SCSI transport, but its scan start sequence
+    // needs the same two model-specific setup phases used by SANE's Fujitsu
+    // backend. It also exposes color as the hardware mode; gray and lineart
+    // are converted by the app after acquisition.
+    var requiresJPEGQuantizationTable: Bool { if case .ix500 = self { true } else { false } }
+    var requiresDiagnosticPreRead: Bool { if case .ix500 = self { true } else { false } }
+    var skipsLampCommand: Bool { if case .ix500 = self { true } else { false } }
+    var usesSoftwareColorConversion: Bool { if case .ix500 = self { true } else { false } }
+}
+
 private struct FujitsuInquiry {
     let vendor: String
     let product: String
@@ -107,6 +156,7 @@ private struct FujitsuInquiry {
 
 private final class FujitsuSCSIOverUSBCommandEngine {
     private let transport: USBDeviceTransport
+    private let model: FujitsuScanSnapModel
 
     private let commandTimeout: UInt32 = 30_000
     private let shortCommandTimeout: UInt32 = 500
@@ -120,8 +170,9 @@ private final class FujitsuSCSIOverUSBCommandEngine {
     // (30,600 bytes for 2550-pixel RGB at 300 dpi).
     private let transferChunkSize = 32 * 1024
 
-    init(transport: USBDeviceTransport) {
+    init(transport: USBDeviceTransport, model: FujitsuScanSnapModel = .s1500) {
         self.transport = transport
+        self.model = model
     }
 
     func waitUntilReady() async throws {
@@ -158,7 +209,7 @@ private final class FujitsuSCSIOverUSBCommandEngine {
     }
 
     func scan(options: ScanOptions, isCancelled: @escaping () -> Bool, onPage: @escaping (PageFrame) async throws -> Void) async throws -> Int {
-        let plan = FujitsuScanPlan(options: options)
+        let plan = FujitsuScanPlan(options: options, model: model)
 
         ScanTrace.post("Preparing \(plan.traceDescription).")
         do {
@@ -166,15 +217,27 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         } catch {
             ScanTrace.post("ADF source selection was ignored by scanner: \(error.localizedDescription).")
         }
+        if model.requiresDiagnosticPreRead {
+            do {
+                try await sendDiagnosticPreRead(plan: plan)
+            } catch {
+                ScanTrace.post("iX500 pre-read setup was ignored by scanner: \(error.localizedDescription).")
+            }
+        }
         try await modeSelectAuto(plan: plan)
         try await modeSelectDoubleFeedDefault()
         try await modeSelectDropoutDefault()
         try await modeSelectBufferOffAndClear()
         try await setWindow(plan: plan)
-        if plan.colorMode != .lineart {
+        if model.requiresJPEGQuantizationTable {
+            try await sendJPEGQuantizationTable()
+        }
+        if plan.deviceColorMode != .lineart {
             try await sendDefaultGammaLUT()
         }
-        await turnLampOnWhenReady()
+        if !model.skipsLampCommand {
+            await turnLampOnWhenReady()
+        }
 
         do {
             var pageCount = 0
@@ -326,6 +389,61 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         payload[5] = 6
         payload[6] = 0x80
         payload[7] = 0xc0
+        try await sendSCSICommand(command, output: Data(payload))
+    }
+
+    private func sendJPEGQuantizationTable() async throws {
+        // The iX500 expects an 8-bit JPEG quantization table before a scan,
+        // even though this app requests uncompressed scanner image data.
+        let yTable: [UInt8] = [
+            0x04, 0x03, 0x03, 0x04, 0x03, 0x03, 0x04, 0x04,
+            0x03, 0x04, 0x05, 0x05, 0x04, 0x05, 0x07, 0x0c,
+            0x07, 0x07, 0x06, 0x06, 0x07, 0x0e, 0x0a, 0x0b,
+            0x08, 0x0c, 0x11, 0x0f, 0x12, 0x12, 0x11, 0x0f,
+            0x10, 0x10, 0x13, 0x15, 0x1b, 0x17, 0x13, 0x14,
+            0x1a, 0x14, 0x10, 0x10, 0x18, 0x20, 0x18, 0x1a,
+            0x1c, 0x1d, 0x1e, 0x1f, 0x1e, 0x12, 0x17, 0x21,
+            0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22
+        ]
+        let uvTable: [UInt8] = [
+            0x05, 0x05, 0x05, 0x07, 0x06, 0x07, 0x0e, 0x07,
+            0x07, 0x0e, 0x1d, 0x13, 0x10, 0x13, 0x1d, 0x1d,
+            0x1d, 0x1d, 0x1d, 0x1d, 0x1d, 0x1d, 0x1d, 0x1d,
+            0x1d, 0x1d, 0x1d, 0x1d, 0x1d, 0x1d, 0x1d, 0x1d,
+            0x1d, 0x1d, 0x1d, 0x1d, 0x1d, 0x1d, 0x1d, 0x1d,
+            0x1d, 0x1d, 0x1d, 0x1d, 0x1d, 0x1d, 0x1d, 0x1d,
+            0x1d, 0x1d, 0x1d, 0x1d, 0x1d, 0x1d, 0x1d, 0x1d,
+            0x1d, 0x1d, 0x1d, 0x1d, 0x1d, 0x1d, 0x1d, 0x1d
+        ]
+
+        var command = [UInt8](repeating: 0, count: 10)
+        command[0] = 0x2a
+        command[2] = 0x88
+        Self.put(&command, offset: 6, value: 10 + yTable.count + uvTable.count, byteCount: 3)
+
+        var payload = [UInt8](repeating: 0, count: 10 + yTable.count + uvTable.count)
+        Self.put(&payload, offset: 4, value: yTable.count, byteCount: 2)
+        Self.put(&payload, offset: 6, value: uvTable.count, byteCount: 2)
+        payload.replaceSubrange(10..<(10 + yTable.count), with: yTable)
+        payload.replaceSubrange((10 + yTable.count)..<payload.count, with: uvTable)
+        ScanTrace.post("Command: send iX500 JPEG quantization table.")
+        try await sendSCSICommand(command, output: Data(payload))
+    }
+
+    private func sendDiagnosticPreRead(plan: FujitsuScanPlan) async throws {
+        var command = [UInt8](repeating: 0, count: 6)
+        command[0] = 0x1d
+        Self.put(&command, offset: 3, value: 32, byteCount: 2)
+
+        var payload = [UInt8](repeating: 0, count: 32)
+        let marker = Array("SET PRE READMODE".utf8) + [0]
+        payload.replaceSubrange(0..<marker.count, with: marker)
+        Self.put(&payload, offset: 0x10, value: plan.resolutionDPI, byteCount: 2)
+        Self.put(&payload, offset: 0x12, value: plan.resolutionDPI, byteCount: 2)
+        Self.put(&payload, offset: 0x14, value: plan.paperWidthScannerUnits, byteCount: 4)
+        Self.put(&payload, offset: 0x18, value: plan.paperHeightScannerUnits, byteCount: 4)
+        payload[0x1c] = plan.composition
+        ScanTrace.post("Command: iX500 diagnostic pre-read setup.")
         try await sendSCSICommand(command, output: Data(payload))
     }
 
@@ -826,31 +944,37 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         ) else {
             throw ScannerError.outputFailed("Could not create bitmap image from scanner data.")
         }
-        if plan.colorMode == .lineart {
-            data.withUnsafeBytes { rawBuffer in
-                guard let source = rawBuffer.bindMemory(to: UInt8.self).baseAddress,
-                      let destination = bitmap.bitmapData else { return }
-                for row in 0..<size.height {
-                    let sourceRow = source + row * sourceBytesPerRow
-                    let destinationRow = destination + row * bytesPerRow
-                    for column in 0..<size.width {
+        data.withUnsafeBytes { rawBuffer in
+            guard let source = rawBuffer.bindMemory(to: UInt8.self).baseAddress,
+                  let destination = bitmap.bitmapData else { return }
+
+            for row in 0..<size.height {
+                let sourceRow = source + row * sourceBytesPerRow
+                let destinationRow = destination + row * bytesPerRow
+                for column in 0..<size.width {
+                    if plan.deviceColorMode == .lineart {
                         let isBlack = (sourceRow[column / 8] & (0x80 >> (column % 8))) != 0
                         destinationRow[column] = isBlack ? 0 : 255
+                        continue
                     }
-                }
-            }
-        } else {
-            data.withUnsafeBytes { rawBuffer in
-                guard let source = rawBuffer.bindMemory(to: UInt8.self).baseAddress,
-                      let destination = bitmap.bitmapData else { return }
 
-                // The S1500 returns raw grayscale and RGB samples with Fujitsu's
-                // inverted polarity. JPEG expects conventional sample values, so
-                // normalize them here (the same mode-specific correction used by
-                // SANE's Fujitsu backend). Line-art data has the opposite device
-                // convention and is expanded separately above.
-                for index in 0..<(bytesPerRow * size.height) {
-                    destination[index] = source[index] ^ 0xff
+                    let sourceOffset = column * (plan.deviceColorMode == .color ? 3 : 1)
+                    let red = sourceRow[sourceOffset] ^ 0xff
+                    if plan.colorMode == .color {
+                        destinationRow[column * 3] = red
+                        destinationRow[column * 3 + 1] = sourceRow[sourceOffset + 1] ^ 0xff
+                        destinationRow[column * 3 + 2] = sourceRow[sourceOffset + 2] ^ 0xff
+                    } else {
+                        let gray: UInt8
+                        if plan.deviceColorMode == .color {
+                            let green = sourceRow[sourceOffset + 1] ^ 0xff
+                            let blue = sourceRow[sourceOffset + 2] ^ 0xff
+                            gray = UInt8((Int(red) * 299 + Int(green) * 587 + Int(blue) * 114) / 1000)
+                        } else {
+                            gray = red
+                        }
+                        destinationRow[column] = plan.colorMode == .lineart ? (gray < 128 ? 0 : 255) : gray
+                    }
                 }
             }
         }
@@ -1042,8 +1166,10 @@ private final class FujitsuImageReadState {
 
 private struct FujitsuScanPlan {
     let options: ScanOptions
+    let model: FujitsuScanSnapModel
     let resolutionDPI: Int
     let colorMode: ScanColorMode
+    let deviceColorMode: ScanColorMode
     let isDuplex: Bool
     let sourceWindowID: UInt8
     let widthScannerUnits: Int
@@ -1053,7 +1179,7 @@ private struct FujitsuScanPlan {
     let imageSize: FujitsuImageSize
 
     func bytesPerLine(forWidth width: Int) -> Int {
-        switch colorMode {
+        switch deviceColorMode {
         case .color:
             width * 3
         case .gray:
@@ -1068,11 +1194,11 @@ private struct FujitsuScanPlan {
     }
 
     var bitsPerPixel: UInt8 {
-        colorMode == .lineart ? 1 : 8
+        deviceColorMode == .lineart ? 1 : 8
     }
 
     var composition: UInt8 {
-        switch colorMode {
+        switch deviceColorMode {
         case .lineart:
             0
         case .gray:
@@ -1086,10 +1212,12 @@ private struct FujitsuScanPlan {
         "\(sourceWindowID == 0x80 ? "back" : isDuplex ? "duplex" : "front") \(resolutionDPI)dpi \(colorMode.rawValue.lowercased())"
     }
 
-    init(options: ScanOptions) {
+    init(options: ScanOptions, model: FujitsuScanSnapModel) {
         self.options = options
+        self.model = model
         self.resolutionDPI = options.resolutionDPI
         self.colorMode = options.colorMode
+        self.deviceColorMode = model.usesSoftwareColorConversion ? .color : options.colorMode
         self.isDuplex = options.source == .adfDuplex
         self.sourceWindowID = options.source == .adfBack ? 0x80 : 0x00
 
@@ -1102,8 +1230,12 @@ private struct FujitsuScanPlan {
         self.paperWidthScannerUnits = 10_201
         self.paperHeightScannerUnits = 16_802
         self.imageSize = FujitsuImageSize(
-            width: Int(widthInches * Double(options.resolutionDPI)),
+            width: Int(widthInches * Double(options.resolutionDPI)).roundedDownToEven,
             height: Int(heightInches * Double(options.resolutionDPI))
         )
     }
+}
+
+private extension Int {
+    var roundedDownToEven: Int { self - (self % 2) }
 }
