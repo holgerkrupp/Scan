@@ -42,6 +42,7 @@ final class ScannerWorkspaceViewModel {
     var showsSimulator = true
     var diagnosticsExpanded = false
     var isCancelRequested = false
+    var s300FirmwareFilename: String?
 
     private let discovery: ScannerDiscovery
     private let registry: ScannerDriverRegistry
@@ -50,11 +51,15 @@ final class ScannerWorkspaceViewModel {
     private var activeDevice: ScannerDevice?
     private var pageStore: ScanPageStore?
     private var traceObserver: NSObjectProtocol?
+    private let s300FirmwareStore: ScanSnapS300FirmwareStore
 
     convenience init() { self.init(discovery: CompositeScannerDiscovery(), registry: .live, outputWriter: ScanOutputWriter(), profileStore: ScanProfileStore(defaults: .standard)) }
 
     init(discovery: ScannerDiscovery, registry: ScannerDriverRegistry, outputWriter: ScanOutputWriter, profileStore: ScanProfileStore) {
         self.discovery = discovery; self.registry = registry; self.outputWriter = outputWriter; self.profileStore = profileStore
+        let firmwareStore = ScanSnapS300FirmwareStore(defaults: .standard)
+        self.s300FirmwareStore = firmwareStore
+        self.s300FirmwareFilename = firmwareStore.selectedFilename
         let loadedProfiles = profileStore.load()
         self.profiles = loadedProfiles
         let selectedID = profileStore.selectedProfileID
@@ -78,9 +83,33 @@ final class ScannerWorkspaceViewModel {
 
     func capabilities(for identity: ScannerIdentity) -> ScannerCapabilities? { registry.capabilities(for: identity) }
 
+    var selectedScannerUsesS300Protocol: Bool {
+        guard let deviceID = selectedIdentity?.usbDeviceID else { return false }
+        return FujitsuScanSnapS300Driver(firmwareProvider: { nil }).supportedUSBDeviceIDs.contains(deviceID)
+    }
+
     func chooseDestination() {
         let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true; panel.allowsMultipleSelection = false; panel.prompt = "Use Folder"; panel.directoryURL = destinationFolder
         if panel.runModal() == .OK, let url = panel.url { destinationFolder = url; _ = url.startAccessingSecurityScopedResource(); log("Destination set to \(url.path).") }
+    }
+
+    func chooseS300Firmware() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.title = "Choose ScanSnap S300 Firmware"
+        panel.message = "Select 300_0C00.nal for an S300 or 300M_0C00.nal for an S300M. The app stores only a security-scoped bookmark."
+        panel.prompt = "Use Firmware"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try s300FirmwareStore.saveFirmware(at: url)
+            s300FirmwareFilename = url.lastPathComponent
+            log("S300 firmware selected: \(url.lastPathComponent).")
+        } catch {
+            status = .error(error.localizedDescription)
+            log("Could not use S300 firmware: \(error.localizedDescription)")
+        }
     }
 
     func startScan() async {

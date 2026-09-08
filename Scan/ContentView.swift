@@ -20,12 +20,20 @@ struct ContentView: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack { Label("Scanners", systemImage: "scanner").font(.headline); Spacer(); Button { Task { await viewModel.refreshDevices() } } label: { Image(systemName: "arrow.clockwise") }.disabled(viewModel.isRefreshing) }
-            Text("Legacy ScanSnap S500/S510/S1500/iX500 USB plus Image Capture").font(.caption).foregroundStyle(.secondary)
+            Text("Legacy ScanSnap USB (S300 experimental) plus Image Capture").font(.caption).foregroundStyle(.secondary)
             List(selection: Binding(get: { viewModel.selectedIdentity }, set: { viewModel.selectedIdentity = $0 })) {
                 ForEach(viewModel.discoveredIdentities) { identity in
+                    let capabilities = viewModel.capabilities(for: identity)
                     VStack(alignment: .leading, spacing: 3) {
-                        HStack { Text(identity.name).font(.subheadline.weight(.medium)); Spacer(); if viewModel.capabilities(for: identity) == nil { Image(systemName: "questionmark.circle").foregroundStyle(.orange) } }
-                        Text(viewModel.capabilities(for: identity) == nil ? "Discovered, unsupported" : identity.subtitle).font(.caption).foregroundStyle(viewModel.capabilities(for: identity) == nil ? .orange : .secondary)
+                        HStack {
+                            Text(identity.name).font(.subheadline.weight(.medium))
+                            Spacer()
+                            if capabilities == nil { Image(systemName: "questionmark.circle").foregroundStyle(.orange) }
+                            else if capabilities?.unsupportedReason != nil { Image(systemName: "exclamationmark.triangle").foregroundStyle(.yellow) }
+                        }
+                        Text(capabilities?.unsupportedReason ?? (capabilities == nil ? "Discovered, unsupported" : identity.subtitle))
+                            .font(.caption)
+                            .foregroundStyle(capabilities == nil ? .orange : .secondary)
                     }.tag(identity)
                 }
             }.listStyle(.sidebar)
@@ -106,6 +114,14 @@ struct ContentView: View {
                 capabilityToggle("Automatic orientation", value: profile(\.options.processing.autoRotate), supported: viewModel.capabilities?.supportsAutoRotate ?? false, reason: "Automatic orientation is unavailable for this backend.")
             }
             Section("Diagnostics") {
+                if viewModel.selectedScannerUsesS300Protocol {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Button("Choose S300 firmware…") { viewModel.chooseS300Firmware() }
+                        Text(viewModel.s300FirmwareFilename.map { "S300 firmware: \($0)" } ?? "S300 firmware is not selected")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 DisclosureGroup("Activity log", isExpanded: $viewModel.diagnosticsExpanded) { Button("Copy log") { viewModel.copyActivityLog() }; ScrollView { Text(viewModel.activityLog.reversed().joined(separator: "\n")).font(.caption.monospaced()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(minHeight: 100, maxHeight: 220) }
                 if !viewModel.lastOutputs.isEmpty { Text("Last export: \(ByteCountFormatter.string(fromByteCount: viewModel.lastOutputByteCount, countStyle: .file))").font(.caption) }
             }

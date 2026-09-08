@@ -64,6 +64,7 @@ final class ScannerDriverRegistry {
 
     static let live = ScannerDriverRegistry(
         drivers: [
+            FujitsuScanSnapS300Driver(),
             FujitsuScanSnapS1500Driver(),
             ImageCaptureScannerDriver(),
             MockScannerDriver()

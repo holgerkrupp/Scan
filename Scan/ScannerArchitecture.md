@@ -33,6 +33,17 @@ path is color-based.
 
 Page frames are yielded as each sheet is completed rather than collected for the whole feeder batch. The command engine never makes output-format compression decisions. Cancellation sets a terminal cancellation flag before aborting transfers, so a late transport error cannot replace cancellation with a generic failure. Partial pages remain in the review workspace.
 
+## Experimental ScanSnap S300 direct-USB backend
+
+`FujitsuScanSnapS300Driver` separately matches the S300 (`0x1156`) and S300M
+(`0x117f`). These scanners do not use the SCSI-over-USB command wrapper. The
+backend implements direct bulk status, firmware upload/checksum,
+reinitialization, and identity exchanges. The required Fujitsu firmware is
+not redistributable, so the user chooses it and the app retains a
+security-scoped bookmark. Model-specific calibration and image acquisition
+remain disabled until they have an independently implemented command model
+and can be exercised against physical hardware.
+
 ## Image Capture backend and discovery
 
 `CompositeScannerDiscovery` combines the native USB enumerator with `ICDeviceBrowser`. If both layers report the same USB vendor/product, serial, or location, the native identity wins. Image Capture maps flatbed/document-feeder units, duplex availability, supported resolutions, scan area, progress, cancellation, and file-based received pages into `ScannerDevice`.
@@ -45,4 +56,4 @@ Devices discovered without a matching driver remain visible as “Discovered, un
 2. Add only verified USB IDs to that driver’s `supportedUSBDeviceIDs`.
 3. Add the driver to `ScannerDriverRegistry.live` after its transport/protocol tests pass.
 4. Add a hardware validation matrix covering enumeration, open/close, every advertised source/color/DPI combination, simplex/duplex ordering, page dimensions, cancellation, empty feeder, jam/double-feed, disconnect, and partial-batch recovery.
-5. Keep simulated fixtures and automated tests independent of physical hardware. The legacy IDs above are protocol-backed profiles; physical validation of each model is still required before release claims are made. The S1300/S1300i and S1100/S1100i models are not included because their epjitsu protocol is different.
+5. Keep simulated fixtures and automated tests independent of physical hardware. The legacy SCSI IDs above are protocol-backed profiles; physical validation of each model is still required before release claims are made. The S1300/S1300i and S1100/S1100i models are not included because their epjitsu protocol is different.
