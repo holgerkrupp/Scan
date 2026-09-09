@@ -1253,7 +1253,7 @@ private final class FujitsuSCSIOverUSBCommandEngine {
 /// `downsample_from_buffer()` does it: average of the three channels, and a
 /// fixed mid-range threshold for line-art.
 enum FujitsuScanSnapImageDecoder {
-    struct Samples: Equatable {
+    nonisolated struct Samples: Equatable, Sendable {
         let bytes: [UInt8]
         let samplesPerPixel: Int
     }
@@ -1548,7 +1548,7 @@ private struct FujitsuSCSIStatusError: LocalizedError {
     }
 }
 
-struct FujitsuImageSize: Equatable, Sendable {
+nonisolated struct FujitsuImageSize: Equatable, Sendable {
     let width: Int
     let height: Int
 }
