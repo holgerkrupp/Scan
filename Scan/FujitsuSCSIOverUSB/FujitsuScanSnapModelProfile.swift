@@ -50,6 +50,10 @@ struct FujitsuScanSnapModelProfile: Sendable {
     /// whole number of scan lines. Larger values mean fewer SCSI round trips.
     let transferChunkSize: Int
 
+    /// Input width of the downloadable gamma table (SANE `adbits`): the table
+    /// has `1 << lookupTableInputBits` entries mapping onto 8-bit output.
+    let lookupTableInputBits: Int
+
     /// Fujitsu ScanSnap S1500 / S1500M. The validated reference model.
     static let s1500 = FujitsuScanSnapModelProfile(
         name: "Fujitsu ScanSnap S1500/S1500M",
@@ -72,7 +76,9 @@ struct FujitsuScanSnapModelProfile: Sendable {
         probesColorInterlace: false,
         toleratesModeSelectFailures: false,
         // The S1500's USB image endpoint terminates data phases after 32 KiB.
-        transferChunkSize: 32 * 1024
+        transferChunkSize: 32 * 1024,
+        // 1024-entry table (10-bit A/D), the validated S1500 payload.
+        lookupTableInputBits: 10
     )
 
     /// Fujitsu ScanSnap iX500. Quirks follow SANE `fujitsu.c` `init_model()`:
@@ -103,6 +109,8 @@ struct FujitsuScanSnapModelProfile: Sendable {
         toleratesModeSelectFailures: true,
         // Validated on hardware: 256 KiB reads cut the per-sheet command count
         // from ~1,800 to ~210 for a duplex A4 sheet at 300 dpi.
-        transferChunkSize: 256 * 1024
+        transferChunkSize: 256 * 1024,
+        // SANE forces adbits = 8 for the iX500 ("lies"), i.e. a 256-entry table.
+        lookupTableInputBits: 8
     )
 }

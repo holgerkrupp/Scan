@@ -135,6 +135,10 @@ private final class FujitsuSCSIOverUSBCommandEngine {
     // down to a whole number of scan lines (30,600 bytes for 2550-pixel RGB at
     // 300 dpi with the S1500's 32 KiB).
     private var transferChunkSize: Int { profile.transferChunkSize }
+    // "Image data ready?" polling: 100 ms granularity, 60 s overall budget.
+    // With scanner buffering the next sheet is usually ready within one poll.
+    private static let imageDataPollInterval: UInt64 = 100_000_000
+    private static let imageDataPollAttempts = 600
 
     /// Colour interlacing accepted by the scanner. Determined once by probing
     /// `SET WINDOW` (models with `probesColorInterlace`) and reused for the
@@ -665,15 +669,7 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         var command = [UInt8](repeating: 0, count: 10)
         command[0] = 0x2a
         command[2] = 0x83
-
-        var payload = [UInt8](repeating: 0, count: 10 + 1024)
-        payload[2] = 0x10
-        Self.put(&payload, offset: 4, value: 1024, byteCount: 2)
-        Self.put(&payload, offset: 6, value: 256, byteCount: 2)
-        for input in 0..<1024 {
-            let output = max(0, min(255, Int(Double(input) * 0.25 - 0.5)))
-            payload[10 + input] = UInt8(output)
-        }
+        let payload = FujitsuGammaTable.payload(inputBits: profile.lookupTableInputBits)
         Self.put(&command, offset: 6, value: payload.count, byteCount: 3)
         try await sendSCSICommand(command, output: Data(payload))
     }
@@ -830,10 +826,10 @@ private final class FujitsuSCSIOverUSBCommandEngine {
                 idleAttempts = 0
             } else {
                 idleAttempts += 1
-                if idleAttempts >= 120 {
+                if idleAttempts >= Self.imageDataPollAttempts {
                     throw ScannerError.transportUnavailable("Timed out waiting for duplex image data.")
                 }
-                try await Task.sleep(nanoseconds: 500_000_000)
+                try await Task.sleep(nanoseconds: Self.imageDataPollInterval)
             }
         }
 
@@ -916,10 +912,10 @@ private final class FujitsuSCSIOverUSBCommandEngine {
                 idleAttempts = 0
             } else {
                 idleAttempts += 1
-                if idleAttempts >= 120 {
+                if idleAttempts >= Self.imageDataPollAttempts {
                     throw ScannerError.transportUnavailable("Timed out waiting for duplex JPEG data.")
                 }
-                try await Task.sleep(nanoseconds: 500_000_000)
+                try await Task.sleep(nanoseconds: Self.imageDataPollInterval)
             }
         }
         return [front.image(front.splitter.front), back.image(back.splitter.front)]
@@ -1033,7 +1029,7 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         Self.put(&command, offset: 6, value: byteCount, byteCount: 3)
         ScanTrace.post("Command: read-image-count CDB \(Self.hex(command)).")
 
-        for attempt in 1...120 {
+        for attempt in 1...Self.imageDataPollAttempts {
             do {
                 try await sendSCSICommand(command)
                 if attempt > 1 {
@@ -1042,10 +1038,10 @@ private final class FujitsuSCSIOverUSBCommandEngine {
                 return
             } catch let error as FujitsuSCSIStatusError {
                 if error.isTemporaryNoData || error.isBusy {
-                    if attempt == 1 || attempt % 10 == 0 {
+                    if attempt == 1 || attempt % 50 == 0 {
                         ScanTrace.post("Scanner has no image data yet; waiting (\(attempt)).")
                     }
-                    try await Task.sleep(nanoseconds: 500_000_000)
+                    try await Task.sleep(nanoseconds: Self.imageDataPollInterval)
                     continue
                 }
                 if error.isUnsupportedCommand {
@@ -1410,6 +1406,29 @@ enum FujitsuScanSnapImageDecoder {
     }
 }
 
+/// Downloadable gamma table (SEND data type 0x83), built like SANE's
+/// `send_lut()` with brightness and contrast at their defaults: a straight line
+/// from `1 << inputBits` input values onto 8-bit output.
+enum FujitsuGammaTable {
+    static let headerLength = 10
+
+    static func payload(inputBits: Int) -> [UInt8] {
+        let entries = 1 << inputBits
+        let slope = 256.0 / Double(entries)
+        var payload = [UInt8](repeating: 0, count: headerLength + entries)
+        payload[2] = 0x10
+        payload[4] = UInt8(truncatingIfNeeded: entries >> 8)
+        payload[5] = UInt8(truncatingIfNeeded: entries)
+        payload[6] = 0x01
+        payload[7] = 0x00
+        for input in 0..<entries {
+            let output = max(0, min(255, Int(Double(input) * slope - 0.5)))
+            payload[headerLength + input] = UInt8(output)
+        }
+        return payload
+    }
+}
+
 private struct FujitsuSenseData {
     let senseKey: UInt8
     let asc: UInt8
@@ -1677,8 +1696,18 @@ struct FujitsuScanPlan: Sendable {
     }
 
     /// Maps the export JPEG quality (0.4...1.0) onto Fujitsu's 1...7 argument.
+    /// The steps are deliberately flat at the top: on the iX500, Q5 yields
+    /// ~2 MB per A4 colour page at 300 dpi and Q6 already ~6 MB with no visible
+    /// gain, so only the lossless preset asks for Q7.
     static func jpegQualityArgument(forExportQuality quality: Double) -> UInt8 {
-        let clamped = min(1.0, max(0.4, quality))
-        return UInt8(max(1, min(7, Int((1.0 + (clamped - 0.4) / 0.6 * 6.0).rounded()))))
+        switch quality {
+        case ..<0.5: 1
+        case ..<0.65: 2
+        case ..<0.78: 3
+        case ..<0.88: 4
+        case ..<0.97: 5
+        case ..<1.0: 6
+        default: 7
+        }
     }
 }

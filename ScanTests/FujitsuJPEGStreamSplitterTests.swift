@@ -112,15 +112,17 @@ final class FujitsuJPEGStreamSplitterTests: XCTestCase {
         XCTAssertEqual(plan.widthScannerUnits, 2544 * 1200 / 300)
         XCTAssertEqual(plan.imageSize.height, 4200)
         XCTAssertEqual(plan.heightScannerUnits, 16_800)
-        XCTAssertEqual(plan.jpegQualityArgument, 5, "export quality 0.82 maps to Q5")
+        XCTAssertEqual(plan.jpegQualityArgument, 4, "export quality 0.82 maps to Q4")
 
         options.acquisition.resolutionDPI = 150
         XCTAssertEqual(FujitsuScanPlan(options: options, profile: .ix500).imageSize, FujitsuImageSize(width: 1272, height: 2096))
 
         XCTAssertFalse(FujitsuScanPlan(options: options, profile: .s1500).hardwareJPEG)
         XCTAssertEqual(FujitsuScanPlan.jpegQualityArgument(forExportQuality: 0.4), 1)
-        XCTAssertEqual(FujitsuScanPlan.jpegQualityArgument(forExportQuality: 0.7), 4)
-        XCTAssertEqual(FujitsuScanPlan.jpegQualityArgument(forExportQuality: 0.92), 6)
+        XCTAssertEqual(FujitsuScanPlan.jpegQualityArgument(forExportQuality: 0.7), 3)
+        XCTAssertEqual(FujitsuScanPlan.jpegQualityArgument(forExportQuality: 0.82), 4)
+        XCTAssertEqual(FujitsuScanPlan.jpegQualityArgument(forExportQuality: 0.92), 5)
+        XCTAssertEqual(FujitsuScanPlan.jpegQualityArgument(forExportQuality: 0.98), 6)
         XCTAssertEqual(FujitsuScanPlan.jpegQualityArgument(forExportQuality: 1.0), 7)
 
         let legacy = Data(#"{"source":"ADF Front","colorMode":"Gray","resolutionDPI":200}"#.utf8)

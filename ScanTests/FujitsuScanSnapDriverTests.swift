@@ -84,6 +84,23 @@ final class FujitsuScanSnapDriverTests: XCTestCase {
         XCTAssertEqual(roundTrip, options.acquisition)
     }
 
+    func testGammaTablePayloadsMatchSANEAndPinTheS1500Bytes() {
+        // S1500: the exact 1034-byte payload the original driver sent.
+        var expected = [UInt8](repeating: 0, count: 10 + 1024)
+        expected[2] = 0x10; expected[4] = 0x04; expected[5] = 0x00; expected[6] = 0x01; expected[7] = 0x00
+        for input in 0..<1024 { expected[10 + input] = UInt8(max(0, min(255, Int(Double(input) * 0.25 - 0.5)))) }
+        XCTAssertEqual(FujitsuGammaTable.payload(inputBits: FujitsuScanSnapModelProfile.s1500.lookupTableInputBits), expected)
+
+        // iX500: SANE's adbits = 8 table, 256 entries, slope 1, offset -0.5.
+        let ix500 = FujitsuGammaTable.payload(inputBits: FujitsuScanSnapModelProfile.ix500.lookupTableInputBits)
+        XCTAssertEqual(ix500.count, 10 + 256)
+        XCTAssertEqual(Array(ix500[0..<10]), [0, 0, 0x10, 0, 0x01, 0x00, 0x01, 0x00, 0, 0])
+        XCTAssertEqual(ix500[10], 0)
+        XCTAssertEqual(ix500[11], 0)
+        XCTAssertEqual(ix500[12], 1)
+        XCTAssertEqual(ix500[10 + 255], 254)
+    }
+
     func testColorInterlaceWindowBytesMatchSANE() {
         XCTAssertEqual(FujitsuColorInterlace.rgb.scanningOrder, 0x01)
         XCTAssertEqual(FujitsuColorInterlace.rgb.scanningOrderArgument, 0x00)
