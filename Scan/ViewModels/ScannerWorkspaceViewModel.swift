@@ -156,6 +156,7 @@ final class ScannerWorkspaceViewModel {
         if !capabilities.supportsDeskew { profile.options.deskew = false }
         if !capabilities.supportsAutoCrop { profile.options.autoCrop = false }
         if !capabilities.supportsAutoRotate { profile.options.autoRotate = false }
+        if !capabilities.supportsScannerBuffering { profile.options.acquisition.scannerBuffering = false }
         if profile != selectedProfile { updateProfile(profile) }
     }
     private func persistProfiles() { profileStore.save(profiles) }

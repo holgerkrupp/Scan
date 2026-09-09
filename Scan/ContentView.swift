@@ -82,6 +82,7 @@ struct ContentView: View {
                 Picker("Color mode", selection: profile(\.options.acquisition.colorMode)) { ForEach(ScanColorMode.allCases) { Text($0.rawValue).tag($0).disabled(!viewModel.isSupported($0)) } }
                 Picker("DPI", selection: profile(\.options.acquisition.resolutionDPI)) { ForEach([75, 100, 150, 200, 300, 400, 600], id: \.self) { Text("\($0) dpi").tag($0).disabled(!viewModel.isSupported($0)) } }
                 if let capabilities = viewModel.capabilities { Text("Supported: \(capabilities.resolutionsDPI.map(String.init).joined(separator: ", ")) dpi").font(.caption).foregroundStyle(.secondary) }
+                capabilityToggle("Scanner buffering", value: profile(\.options.acquisition.scannerBuffering), supported: viewModel.capabilities?.supportsScannerBuffering ?? false, reason: "This scanner does not expose ADF read-ahead buffering.")
             }
             Section("Image") {
                 Picker("Output", selection: profile(\.options.export.outputFormat)) { ForEach(ScanOutputFormat.allCases) { Text($0.rawValue).tag($0).disabled(!viewModel.isSupported($0)) } }

@@ -13,6 +13,7 @@ import XCTest
 /// - `SCAN_HW_MODE` (`color`, `gray`, `lineart`; default `color`)
 /// - `SCAN_HW_DPI` (default `300`)
 /// - `SCAN_HW_AUTOCROP` (`1` enables auto-crop, which turns on automatic length detection)
+/// - `SCAN_HW_BUFFER` (`1` enables the scanner's ADF read-ahead buffering)
 /// - `SCAN_HW_OUTPUT_DIR` (directory that receives the page JPEGs and trace log)
 ///
 /// An empty feeder is reported as a successful "pre-scan flow" run; every other
@@ -100,8 +101,9 @@ final class FujitsuScanSnapHardwareTests: XCTestCase {
         // Auto-crop enables the scanner's automatic length detection (ALD),
         // so short documents come back with their real height instead of 14 in.
         let autoCrop = environment["SCAN_HW_AUTOCROP"] == "1"
+        let buffering = environment["SCAN_HW_BUFFER"] == "1"
         return ScanOptions(
-            acquisition: AcquisitionSettings(source: source, colorMode: mode, resolutionDPI: dpi),
+            acquisition: AcquisitionSettings(source: source, colorMode: mode, resolutionDPI: dpi, scannerBuffering: buffering),
             processing: ImageProcessingSettings(autoCrop: autoCrop)
         )
     }
@@ -132,7 +134,7 @@ final class FujitsuScanSnapHardwareTests: XCTestCase {
         let transport = IOKitUSBDeviceTransport(identity: identity)
         let device = driver.makeDevice(identity: identity, transport: transport)
         let options = requestedOptions()
-        collector.append("Options: \(options.source.rawValue), \(options.colorMode.rawValue), \(options.resolutionDPI) dpi, auto-crop \(options.autoCrop)")
+        collector.append("Options: \(options.source.rawValue), \(options.colorMode.rawValue), \(options.resolutionDPI) dpi, auto-crop \(options.autoCrop), buffering \(options.acquisition.scannerBuffering)")
 
         defer {
             let logURL = folder.appendingPathComponent("trace.log")

@@ -194,7 +194,7 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         try await modeSelectAuto(plan: plan)
         try await modeSelectDoubleFeedDefault()
         try await modeSelectDropoutDefault(tolerateFailure: profile.toleratesModeSelectFailures)
-        try await modeSelectBufferOffAndClear(tolerateFailure: profile.toleratesModeSelectFailures)
+        try await modeSelectBuffer(mode: plan.scannerBuffering ? .on : .off, tolerateFailure: profile.toleratesModeSelectFailures)
         try await setWindow(plan: plan)
         if plan.scannerColorMode != .lineart {
             try await sendDefaultGammaLUT()
@@ -264,12 +264,16 @@ private final class FujitsuSCSIOverUSBCommandEngine {
                     deliveredPageCount += 1
                 }
             }
-            try? await modeSelectBufferOffAndClear(tolerateFailure: true)
+            try? await modeSelectBuffer(mode: .off, tolerateFailure: true)
             return deliveredPageCount
         } catch {
             ScanTrace.post("Scan command flow failed; halting paper transport.")
             try? await objectPosition(action: 0x04, label: "halt", waitsForReady: false)
             try? await scannerControl(function: 0x04, label: "cancel")
+            if plan.scannerBuffering {
+                // Drop any sheets the scanner read ahead into its buffer.
+                try? await modeSelectBuffer(mode: .off, tolerateFailure: true)
+            }
             // Keep already transferred pages available for review.
             if let pendingSheet, let frames = try? await pendingSheet.value {
                 for frame in frames {
@@ -515,8 +519,15 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         }
     }
 
-    private func modeSelectBufferOffAndClear(tolerateFailure: Bool) async throws {
-        ScanTrace.post("Command: mode select buffer off and clear.")
+    /// Fujitsu "scan buffer control" mode page 0x3a. Values follow SANE:
+    /// byte 2 bits 6-7 = buffer mode (2 off, 3 on), byte 3 bits 6-7 = clear (3).
+    enum BufferMode: UInt8 {
+        case off = 2
+        case on = 3
+    }
+
+    private func modeSelectBuffer(mode: BufferMode, tolerateFailure: Bool) async throws {
+        ScanTrace.post("Command: mode select buffer \(mode == .on ? "on" : "off") and clear.")
         var command = [UInt8](repeating: 0, count: 6)
         command[0] = 0x15
         command[1] = 0x10
@@ -525,7 +536,7 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         var payload = [UInt8](repeating: 0, count: 12)
         payload[4] = 0x3a
         payload[5] = 6
-        payload[6] = 0x80
+        payload[6] = mode.rawValue << 6
         payload[7] = 0xc0
         do {
             try await sendSCSICommand(command, output: Data(payload))
@@ -1378,6 +1389,7 @@ struct FujitsuScanPlan: Sendable {
     let resolutionDPI: Int
     let colorMode: ScanColorMode
     let scannerColorMode: ScanColorMode
+    let scannerBuffering: Bool
     let isDuplex: Bool
     let sourceWindowID: UInt8
     let widthScannerUnits: Int
@@ -1421,7 +1433,7 @@ struct FujitsuScanPlan: Sendable {
         let mode = colorMode == scannerColorMode
             ? colorMode.rawValue.lowercased()
             : "\(colorMode.rawValue.lowercased()) (scanned as \(scannerColorMode.rawValue.lowercased()))"
-        return "\(side) \(resolutionDPI)dpi \(mode)"
+        return "\(side) \(resolutionDPI)dpi \(mode)\(scannerBuffering ? " with scanner buffering" : "")"
     }
 
     init(options: ScanOptions, profile: FujitsuScanSnapModelProfile) {
@@ -1429,6 +1441,7 @@ struct FujitsuScanPlan: Sendable {
         self.resolutionDPI = options.resolutionDPI
         self.colorMode = options.colorMode
         self.scannerColorMode = profile.emulatesMonochromeInSoftware ? .color : options.colorMode
+        self.scannerBuffering = options.acquisition.scannerBuffering && profile.capabilities.supportsScannerBuffering
         self.isDuplex = options.source == .adfDuplex
         self.sourceWindowID = options.source == .adfBack ? 0x80 : 0x00
 

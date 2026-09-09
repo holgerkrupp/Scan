@@ -67,6 +67,23 @@ final class FujitsuScanSnapDriverTests: XCTestCase {
         }
     }
 
+    func testScannerBufferingIsGatedByCapabilityAndDecodesFromOldProfiles() throws {
+        var options = ScanOptions(acquisition: AcquisitionSettings(source: .adfDuplex, colorMode: .color, resolutionDPI: 300, scannerBuffering: true))
+        XCTAssertNoThrow(try FujitsuScanSnapModelProfile.ix500.capabilities.validate(options))
+        XCTAssertThrowsError(try FujitsuScanSnapModelProfile.s1500.capabilities.validate(options))
+        XCTAssertTrue(FujitsuScanPlan(options: options, profile: .ix500).scannerBuffering)
+        XCTAssertFalse(FujitsuScanPlan(options: options, profile: .s1500).scannerBuffering)
+        options.acquisition.scannerBuffering = false
+        XCTAssertNoThrow(try FujitsuScanSnapModelProfile.s1500.capabilities.validate(options))
+
+        // A profile saved before the option existed has no key for it.
+        let legacy = Data(#"{"source":"ADF Front","colorMode":"Gray","resolutionDPI":200}"#.utf8)
+        let decoded = try JSONDecoder().decode(AcquisitionSettings.self, from: legacy)
+        XCTAssertEqual(decoded, AcquisitionSettings(source: .adfFront, colorMode: .gray, resolutionDPI: 200, scannerBuffering: false))
+        let roundTrip = try JSONDecoder().decode(AcquisitionSettings.self, from: try JSONEncoder().encode(options.acquisition))
+        XCTAssertEqual(roundTrip, options.acquisition)
+    }
+
     func testColorInterlaceWindowBytesMatchSANE() {
         XCTAssertEqual(FujitsuColorInterlace.rgb.scanningOrder, 0x01)
         XCTAssertEqual(FujitsuColorInterlace.rgb.scanningOrderArgument, 0x00)

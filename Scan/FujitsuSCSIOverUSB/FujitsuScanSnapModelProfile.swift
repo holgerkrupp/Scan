@@ -89,7 +89,8 @@ struct FujitsuScanSnapModelProfile: Sendable {
             supportsBlankPageRemoval: true,
             supportsDeskew: true,
             supportsAutoCrop: true,
-            supportsDuplex: true
+            supportsDuplex: true,
+            supportsScannerBuffering: true
         ),
         sendsDiagnosticPreread: true,
         sendsJPEGQuantizationTable: true,
