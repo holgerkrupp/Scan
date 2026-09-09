@@ -141,6 +141,10 @@ private final class FujitsuSCSIOverUSBCommandEngine {
     /// rest of the session. Defaults to RGB dot order.
     private var colorInterlace: FujitsuColorInterlace?
 
+    /// Set by `sendSCSICommand` when the last data phase ended with the benign
+    /// end-of-medium sense, which is how JPEG transfers signal their end.
+    private var lastReadHitEndOfMedium = false
+
     init(transport: USBDeviceTransport, profile: FujitsuScanSnapModelProfile) {
         self.transport = transport
         self.profile = profile
@@ -309,14 +313,22 @@ private final class FujitsuSCSIOverUSBCommandEngine {
     ) throws -> [PageFrame] {
         var frames: [PageFrame] = []
         for (offset, raw) in rawImages.enumerated() {
-            let encoded = try encodeImage(data: raw.data, size: raw.size, plan: plan, interlace: interlace)
+            let encoded: Data
+            var size = raw.size
+            if raw.isJPEG {
+                let converted = try FujitsuScanSnapImageDecoder.finishHardwareJPEG(raw.data, outputColorMode: plan.colorMode)
+                encoded = converted.data
+                size = converted.size
+            } else {
+                encoded = try encodeImage(data: raw.data, size: raw.size, plan: plan, interlace: interlace)
+            }
             frames.append(
                 PageFrame(
                     pageIndex: firstPageIndex + offset,
                     side: raw.side,
                     pixelFormat: .jpeg,
-                    width: raw.size.width,
-                    height: raw.size.height,
+                    width: size.width,
+                    height: size.height,
                     resolutionDPI: plan.resolutionDPI,
                     data: encoded
                 )
@@ -619,8 +631,8 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         descriptor[0x19] = plan.composition
         descriptor[0x1a] = plan.bitsPerPixel
         descriptor[0x1d] = 0
-        descriptor[0x20] = 0
-        descriptor[0x21] = 0
+        descriptor[0x20] = plan.hardwareJPEG ? 0x81 : 0x00
+        descriptor[0x21] = plan.hardwareJPEG ? plan.jpegQualityArgument : 0x00
 
         if plan.scannerColorMode == .color {
             descriptor[0x28] = 0xc1
@@ -769,6 +781,9 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         plan: FujitsuScanPlan,
         isCancelled: @escaping () -> Bool
     ) async throws -> [FujitsuRawImage] {
+        if plan.hardwareJPEG {
+            return try await readJPEGSheet(plan: plan, isCancelled: isCancelled)
+        }
         let requestedSide: PageSide = plan.sourceWindowID == 0x80 ? .back : .front
         let frontSize = (try? await readPixelSize(side: requestedSide)) ?? plan.imageSize
 
@@ -826,6 +841,125 @@ private final class FujitsuSCSIOverUSBCommandEngine {
             try Self.makeRawImage(from: front, plan: plan),
             try Self.makeRawImage(from: back, plan: plan)
         ]
+    }
+
+    /// Hardware JPEG. The requested window is read first; if its SOF reports a
+    /// double-width frame the stream carries both sides and is split by
+    /// `FujitsuJPEGStreamSplitter`. Otherwise (the iX500 case) each side is its
+    /// own stream and both windows are read interleaved, like the raw path.
+    private func readJPEGSheet(
+        plan: FujitsuScanPlan,
+        isCancelled: @escaping () -> Bool
+    ) async throws -> [FujitsuRawImage] {
+        let requestedSide: PageSide = plan.sourceWindowID == 0x80 ? .back : .front
+        let size = (try? await readPixelSize(side: requestedSide)) ?? plan.imageSize
+        if plan.isDuplex {
+            _ = try? await readPixelSize(side: .back)
+        }
+
+        let front = FujitsuJPEGReadState(
+            side: requestedSide,
+            splitter: FujitsuJPEGStreamSplitter(requestedWidth: size.width, resolutionDPI: plan.resolutionDPI, duplex: plan.isDuplex),
+            byteCap: plan.expectedByteCount(for: plan.imageSize) + 1024 * 1024
+        )
+        ScanTrace.post("Reading \(requestedSide.rawValue) JPEG stream in \(transferChunkSize)-byte reads.")
+
+        // Read the first chunk(s) of the requested side until SOF tells us
+        // whether the scanner interlaces both sides into this stream.
+        try await readImageCount(transferChunkSize, side: requestedSide)
+        front.didCheckImageCount = true
+        while !front.isFinished && front.splitter.frameWidth == 0 {
+            if isCancelled() {
+                try await cancel()
+                throw ScannerError.scanCancelled
+            }
+            _ = try await readJPEGChunk(into: front)
+        }
+
+        guard plan.isDuplex, !front.splitter.isInterlaced else {
+            try await readJPEGStream(front, isCancelled: isCancelled)
+            var images = [front.image(front.splitter.front)]
+            if plan.isDuplex {
+                ScanTrace.post("Received \(front.splitter.back.count) JPEG bytes for back (interlaced).")
+                images.append(FujitsuRawImage(side: .back, size: front.frameSize, data: front.splitter.back, isJPEG: true))
+            }
+            return images
+        }
+
+        // Separate streams per side: alternate reads so the scanner's output
+        // for both sides is drained while it is still producing it.
+        let back = FujitsuJPEGReadState(
+            side: .back,
+            splitter: FujitsuJPEGStreamSplitter(requestedWidth: size.width, resolutionDPI: plan.resolutionDPI, duplex: false),
+            byteCap: front.byteCap
+        )
+        ScanTrace.post("Reading front and back JPEG streams interleaved.")
+        var idleAttempts = 0
+        while !front.isFinished || !back.isFinished {
+            if isCancelled() {
+                try await cancel()
+                throw ScannerError.scanCancelled
+            }
+            var madeProgress = false
+            if !front.isFinished {
+                madeProgress = try await readJPEGChunk(into: front) || madeProgress
+            }
+            if !back.isFinished {
+                if !back.didCheckImageCount {
+                    back.didCheckImageCount = try await imageDataIsReady(transferChunkSize, side: .back)
+                }
+                if back.didCheckImageCount {
+                    madeProgress = try await readJPEGChunk(into: back) || madeProgress
+                }
+            }
+            if madeProgress {
+                idleAttempts = 0
+            } else {
+                idleAttempts += 1
+                if idleAttempts >= 120 {
+                    throw ScannerError.transportUnavailable("Timed out waiting for duplex JPEG data.")
+                }
+                try await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
+        return [front.image(front.splitter.front), back.image(back.splitter.front)]
+    }
+
+    private func readJPEGStream(_ state: FujitsuJPEGReadState, isCancelled: @escaping () -> Bool) async throws {
+        while !state.isFinished {
+            if isCancelled() {
+                try await cancel()
+                throw ScannerError.scanCancelled
+            }
+            _ = try await readJPEGChunk(into: state)
+        }
+    }
+
+    /// One READ for a JPEG side. Returns whether any bytes arrived; marks the
+    /// side finished on EOI, end-of-medium, an empty read, or the byte cap.
+    private func readJPEGChunk(into state: FujitsuJPEGReadState) async throws -> Bool {
+        let length = transferChunkSize
+        var command = [UInt8](repeating: 0, count: 10)
+        command[0] = 0x28
+        command[2] = 0x00
+        command[5] = state.side == .back ? 0x80 : 0x00
+        Self.put(&command, offset: 6, value: length, byteCount: 3)
+        let chunk = try await sendSCSICommand(command, expectedReadLength: length, allowShortRead: true)
+        if !chunk.isEmpty {
+            state.splitter.feed(chunk)
+            state.totalBytes += chunk.count
+        }
+        if chunk.isEmpty || lastReadHitEndOfMedium || state.splitter.hasReachedEndOfImage || state.totalBytes >= state.byteCap {
+            state.isFinished = true
+            if state.totalBytes == 0 {
+                throw ScannerError.outputFailed("The scanner returned no JPEG data for the \(state.side.rawValue) side.")
+            }
+            if !state.splitter.hasReachedEndOfImage {
+                ScanTrace.post("JPEG stream for \(state.side.rawValue) ended without an EOI marker after \(state.totalBytes) bytes.")
+            }
+            ScanTrace.post("Received \(state.splitter.front.count) JPEG bytes for \(state.side.rawValue) (SOF \(state.splitter.frameWidth)x\(state.splitter.frameHeight)\(state.splitter.isInterlaced ? ", interlaced duplex" : "")).")
+        }
+        return !chunk.isEmpty
     }
 
     private func readNextChunk(into state: FujitsuImageReadState, plan: FujitsuScanPlan) async throws -> Bool {
@@ -936,6 +1070,7 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         requestSenseOnError: Bool = true,
         shortTimeout: Bool = false
     ) async throws -> Data {
+        lastReadHitEndOfMedium = false
         var wrapper = [UInt8](repeating: 0, count: commandWrapperLength)
         wrapper[0] = 0x43
         wrapper.replaceSubrange(commandWrapperOffset..<(commandWrapperOffset + scsiCommand.count), with: scsiCommand)
@@ -989,6 +1124,7 @@ private final class FujitsuSCSIOverUSBCommandEngine {
             if requestSenseOnError, let sense = try? await requestSenseData() {
                 if sense.isBenignEndOfPage {
                     ScanTrace.post(sense.traceDescription)
+                    lastReadHitEndOfMedium = sense.endOfMedium
                     if sense.incorrectLength, expectedReadLength != nil, input.count == expectedReadLength {
                         input = Data(input.prefix(max(0, input.count - sense.information)))
                     }
@@ -1153,6 +1289,48 @@ enum FujitsuScanSnapImageDecoder {
                 return Samples(bytes: gray.map { $0 < lineartThreshold ? 0 : 255 }, samplesPerPixel: 1)
             }
         }
+    }
+
+    /// Validates a scanner-produced JPEG and converts it to the requested
+    /// output mode. Colour output is passed through untouched; grayscale and
+    /// line-art are derived by decoding once and re-encoding as gray JPEG.
+    static func finishHardwareJPEG(_ jpeg: Data, outputColorMode: ScanColorMode) throws -> (data: Data, size: FujitsuImageSize) {
+        guard let source = NSBitmapImageRep(data: jpeg), source.pixelsWide > 0, source.pixelsHigh > 0 else {
+            throw ScannerError.outputFailed("The scanner's JPEG data could not be decoded.")
+        }
+        let size = FujitsuImageSize(width: source.pixelsWide, height: source.pixelsHigh)
+        if outputColorMode == .color {
+            return (jpeg, size)
+        }
+
+        guard let cgImage = source.cgImage,
+              let context = CGContext(
+                  data: nil, width: size.width, height: size.height, bitsPerComponent: 8, bytesPerRow: size.width,
+                  space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue
+              ) else {
+            throw ScannerError.outputFailed("Could not convert the scanner's JPEG data to grayscale.")
+        }
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: size.width, height: size.height))
+        guard let gray = context.data else {
+            throw ScannerError.outputFailed("Could not access grayscale conversion output.")
+        }
+        let pixels = gray.bindMemory(to: UInt8.self, capacity: size.width * size.height)
+        if outputColorMode == .lineart {
+            for index in 0..<(size.width * size.height) {
+                pixels[index] = pixels[index] < lineartThreshold ? 0 : 255
+            }
+        }
+        guard let bitmap = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: size.width, pixelsHigh: size.height, bitsPerSample: 8, samplesPerPixel: 1,
+            hasAlpha: false, isPlanar: false, colorSpaceName: .deviceWhite, bytesPerRow: size.width, bitsPerPixel: 8
+        ), let destination = bitmap.bitmapData else {
+            throw ScannerError.outputFailed("Could not create grayscale bitmap from scanner JPEG.")
+        }
+        destination.update(from: pixels, count: size.width * size.height)
+        guard let encoded = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.88]) else {
+            throw ScannerError.outputFailed("Could not re-encode the converted page as JPEG.")
+        }
+        return (encoded, size)
     }
 
     private static func expandLineart(data: Data, width: Int, height: Int) -> [UInt8] {
@@ -1361,6 +1539,31 @@ private struct FujitsuRawImage: Sendable {
     let side: PageSide
     let size: FujitsuImageSize
     let data: Data
+    /// `data` is a complete JPEG file from the scanner rather than raw samples.
+    var isJPEG = false
+}
+
+private final class FujitsuJPEGReadState {
+    let side: PageSide
+    let splitter: FujitsuJPEGStreamSplitter
+    let byteCap: Int
+    var totalBytes = 0
+    var didCheckImageCount = false
+    var isFinished = false
+
+    init(side: PageSide, splitter: FujitsuJPEGStreamSplitter, byteCap: Int) {
+        self.side = side
+        self.splitter = splitter
+        self.byteCap = byteCap
+    }
+
+    var frameSize: FujitsuImageSize {
+        FujitsuImageSize(width: splitter.frameWidth, height: splitter.frameHeight)
+    }
+
+    func image(_ data: Data) -> FujitsuRawImage {
+        FujitsuRawImage(side: side, size: frameSize, data: data, isJPEG: true)
+    }
 }
 
 private final class FujitsuImageReadState {
@@ -1390,6 +1593,10 @@ struct FujitsuScanPlan: Sendable {
     let colorMode: ScanColorMode
     let scannerColorMode: ScanColorMode
     let scannerBuffering: Bool
+    /// Ask the scanner for JPEG output (window compression type 0x81).
+    let hardwareJPEG: Bool
+    /// Fujitsu JPEG "Q" argument, 1 (smallest file) to 7 (largest); 0 means 4.
+    let jpegQualityArgument: UInt8
     let isDuplex: Bool
     let sourceWindowID: UInt8
     let widthScannerUnits: Int
@@ -1433,7 +1640,7 @@ struct FujitsuScanPlan: Sendable {
         let mode = colorMode == scannerColorMode
             ? colorMode.rawValue.lowercased()
             : "\(colorMode.rawValue.lowercased()) (scanned as \(scannerColorMode.rawValue.lowercased()))"
-        return "\(side) \(resolutionDPI)dpi \(mode)\(scannerBuffering ? " with scanner buffering" : "")"
+        return "\(side) \(resolutionDPI)dpi \(mode)\(scannerBuffering ? " with scanner buffering" : "")\(hardwareJPEG ? " as hardware JPEG q\(jpegQualityArgument)" : "")"
     }
 
     init(options: ScanOptions, profile: FujitsuScanSnapModelProfile) {
@@ -1442,6 +1649,8 @@ struct FujitsuScanPlan: Sendable {
         self.colorMode = options.colorMode
         self.scannerColorMode = profile.emulatesMonochromeInSoftware ? .color : options.colorMode
         self.scannerBuffering = options.acquisition.scannerBuffering && profile.capabilities.supportsScannerBuffering
+        self.hardwareJPEG = options.acquisition.hardwareCompression && profile.capabilities.supportsHardwareCompression
+        self.jpegQualityArgument = Self.jpegQualityArgument(forExportQuality: options.export.jpegQuality)
         self.isDuplex = options.source == .adfDuplex
         self.sourceWindowID = options.source == .adfBack ? 0x80 : 0x00
 
@@ -1450,18 +1659,26 @@ struct FujitsuScanPlan: Sendable {
         // Pixels per line are rounded down to the model's modulus (SANE
         // ppl_mod_by_mode) and the window width is derived from that, exactly
         // as SANE does. With a modulus of 1 this is 8.5 * 1200 = 10200 units.
-        let modulus = max(1, profile.pixelsPerLineModulus)
+        // JPEG needs whole 8x8 blocks (SANE rounds both dimensions to 8).
+        let modulus = max(1, profile.pixelsPerLineModulus, hardwareJPEG ? 8 : 1)
         var pixelsWide = Int(widthInches * Double(options.resolutionDPI))
         pixelsWide -= pixelsWide % modulus
+        var lines = Int(heightInches * Double(options.resolutionDPI))
+        if hardwareJPEG {
+            lines -= lines % 8
+        }
         self.widthScannerUnits = pixelsWide * 1200 / options.resolutionDPI
-        self.heightScannerUnits = Int(heightInches * 1200.0)
+        self.heightScannerUnits = lines * 1200 / options.resolutionDPI
         // Match the millimetre-to-scanner-unit rounding used by SANE for the
         // physical ADF sheet while retaining the exact requested image window.
         self.paperWidthScannerUnits = 10_201
         self.paperHeightScannerUnits = 16_802
-        self.imageSize = FujitsuImageSize(
-            width: pixelsWide,
-            height: Int(heightInches * Double(options.resolutionDPI))
-        )
+        self.imageSize = FujitsuImageSize(width: pixelsWide, height: lines)
+    }
+
+    /// Maps the export JPEG quality (0.4...1.0) onto Fujitsu's 1...7 argument.
+    static func jpegQualityArgument(forExportQuality quality: Double) -> UInt8 {
+        let clamped = min(1.0, max(0.4, quality))
+        return UInt8(max(1, min(7, Int((1.0 + (clamped - 0.4) / 0.6 * 6.0).rounded()))))
     }
 }

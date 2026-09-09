@@ -90,7 +90,8 @@ struct FujitsuScanSnapModelProfile: Sendable {
             supportsDeskew: true,
             supportsAutoCrop: true,
             supportsDuplex: true,
-            supportsScannerBuffering: true
+            supportsScannerBuffering: true,
+            supportsHardwareCompression: true
         ),
         sendsDiagnosticPreread: true,
         sendsJPEGQuantizationTable: true,
