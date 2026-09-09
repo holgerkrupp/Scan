@@ -1,5 +1,17 @@
 Basic app to use legacy Fujitsu ScanSnap scanners on modern macOS.
 
+## Shortcuts and automation
+
+Scan publishes three App Intents to Shortcuts and Siri: **Scan Document**,
+**Refresh Scanners**, and **Open Scan**. The scan action lets a shortcut choose
+from the profiles saved in Scan, always exports the captured pages, and returns
+the resulting files to the next shortcut action. Its destination is the folder
+selected in Scan, so select that folder once in the app before automating scans.
+
+The same actions are also available from the app's **Scan** menu: Scan Document
+(Command-Return), Export Pages (Command-Shift-E), and Refresh Scanners
+(Command-Shift-R).
+
 ## Native USB support
 
 The native Fujitsu USB backends recognize the following models:

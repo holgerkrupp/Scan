@@ -66,8 +66,7 @@ final class ScannerDriverRegistry {
         drivers: [
             FujitsuScanSnapS300Driver(),
             FujitsuScanSnapS1500Driver(),
-            ImageCaptureScannerDriver(),
-            MockScannerDriver()
+            ImageCaptureScannerDriver()
         ]
     )
 

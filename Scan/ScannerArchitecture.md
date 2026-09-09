@@ -46,7 +46,23 @@ and can be exercised against physical hardware.
 
 ## Image Capture backend and discovery
 
-`CompositeScannerDiscovery` combines the native USB enumerator with `ICDeviceBrowser`. If both layers report the same USB vendor/product, serial, or location, the native identity wins. Image Capture maps flatbed/document-feeder units, duplex availability, supported resolutions, scan area, progress, cancellation, and file-based received pages into `ScannerDevice`.
+`CompositeScannerDiscovery` combines the native USB enumerator with a long-lived
+`ICDeviceBrowser`. The browser watches local, shared, Bonjour, and Bluetooth
+scanner locations, retains the Image Capture device objects needed to open a
+session, and retains its non-owning delegate for the app lifetime. If both
+layers report the same USB vendor/product, serial, or location, the native
+identity wins.
+
+Image Capture opens and closes through its async session APIs. It waits for
+each `requestSelect` delegate callback before reading or configuring the
+selected unit. Flatbed and feeder resolutions are retained per source so a
+flatbed-only DPI is never presented as an ADF option. The backend uses a unique
+file-transfer directory and document name for every job, imports each delivered
+file before removing the transfer copy, maps its actual content type, and
+normalizes Image Capture's 0–100 progress value to the workspace's 0–1 range.
+The framework does not expose an ADF-back-only functional unit, so only front
+and duplex are advertised; duplex page side is marked unknown rather than
+invented.
 
 Devices discovered without a matching driver remain visible as “Discovered, unsupported”; they are never silently treated as S1500 devices.
 

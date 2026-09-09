@@ -24,6 +24,10 @@ actor ScanPageStore {
 @MainActor
 @Observable
 final class ScannerWorkspaceViewModel {
+    /// The single workspace is shared by the window and App Intents so a scan
+    /// started from Shortcuts is visible when the app is brought to the front.
+    static let shared = ScannerWorkspaceViewModel()
+
     var discoveredIdentities: [ScannerIdentity] = []
     var selectedIdentity: ScannerIdentity? { didSet { updateCapabilities() } }
     var selectedProfile: ScanProfile
@@ -39,7 +43,6 @@ final class ScannerWorkspaceViewModel {
     var activityLog: [String] = []
     var isRefreshing = false
     var isScanning = false
-    var showsSimulator = true
     var diagnosticsExpanded = false
     var isCancelRequested = false
     var s300FirmwareFilename: String?
@@ -73,8 +76,7 @@ final class ScannerWorkspaceViewModel {
 
     func refreshDevices() async {
         isRefreshing = true; defer { isRefreshing = false }
-        var identities = await discovery.discover()
-        if showsSimulator { identities.append(contentsOf: [MockScannerDriver.identity, MockScannerDriver.limitedIdentity]) }
+        let identities = await discovery.discover()
         discoveredIdentities = identities
         if selectedIdentity == nil || !identities.contains(where: { $0.id == selectedIdentity?.id }) { selectedIdentity = identities.first }
         status = selectedIdentity == nil ? .disconnected : .idle
@@ -115,8 +117,6 @@ final class ScannerWorkspaceViewModel {
     func startScan() async {
         guard let selectedIdentity else { status = .error("Select a scanner before scanning."); return }
         guard let driver = registry.driver(for: selectedIdentity) else { status = .error("No driver is available for \(selectedIdentity.name). This device is discovered but unsupported."); return }
-        guard let capabilities = registry.capabilities(for: selectedIdentity) else { status = .error("Capabilities are unavailable for \(selectedIdentity.name)."); return }
-        do { try capabilities.validate(selectedProfile.options) } catch { status = .error(error.localizedDescription); log(error.localizedDescription); return }
 
         isScanning = true; isCancelRequested = false; pagesScanned = 0; lastOutputs = []; lastOutputByteCount = 0; pages = []; selectedPageID = nil; status = .scanning(progress: nil, pagesScanned: 0)
         let store = ScanPageStore(); pageStore = store
@@ -124,7 +124,10 @@ final class ScannerWorkspaceViewModel {
         let device = driver.makeDevice(identity: selectedIdentity, transport: transport); activeDevice = device
         defer { activeDevice = nil; isScanning = false }
         do {
-            try await device.open(); if let transport { log("Opened USB pipes: \(await transport.endpointSummary).") }
+            try await device.open()
+            capabilities = device.capabilities
+            reconcileProfile(using: device.capabilities)
+            if let transport { log("Opened USB pipes: \(await transport.endpointSummary).") }
             let stream = try await device.startScan(options: selectedProfile.options)
             for try await frame in stream {
                 let page = try await store.append(frame)
@@ -137,6 +140,35 @@ final class ScannerWorkspaceViewModel {
             else { status = .error(error.localizedDescription); log("Scan failed: \(error.localizedDescription)") }
         }
         await device.close()
+    }
+
+    /// Runs the selected profile as a complete, export-producing job for an
+    /// automation. Unlike the interactive Scan button, this always exports the
+    /// captured pages so Shortcuts has files it can pass to its next action.
+    func scanAndExport(profileID: UUID? = nil) async throws -> ScanJobResult {
+        if let profileID {
+            guard profiles.contains(where: { $0.id == profileID }) else {
+                throw ScannerError.outputFailed("The selected scan profile is no longer available.")
+            }
+            selectProfile(id: profileID)
+        }
+
+        await refreshDevices()
+        guard selectedIdentity != nil else { throw ScannerError.deviceNotFound }
+
+        await startScan()
+        if isCancelRequested { throw ScannerError.scanCancelled }
+        if case let .error(message) = status { throw ScannerError.outputFailed(message) }
+        guard !pages.isEmpty else { throw ScannerError.feederEmpty }
+
+        if lastOutputs.isEmpty {
+            await saveExport()
+        }
+        if case let .error(message) = status { throw ScannerError.outputFailed(message) }
+        guard !lastOutputs.isEmpty else {
+            throw ScannerError.outputFailed("The scan finished without creating an output file.")
+        }
+        return ScanJobResult(outputURLs: lastOutputs, pagesScanned: pages.count, outputByteCount: lastOutputByteCount)
     }
 
     func cancelScan() async {
@@ -168,18 +200,32 @@ final class ScannerWorkspaceViewModel {
     func selectProfile(id: UUID) { guard let profile = profiles.first(where: { $0.id == id }) else { return }; selectedProfile = profile; profileStore.selectedProfileID = profile.id; persistProfiles() }
     func duplicateSelectedProfile() { var copy = selectedProfile; copy.name += " Copy"; copy = ScanProfile(name: copy.name, options: copy.options); profiles.append(copy); selectedProfile = copy; profileStore.selectedProfileID = copy.id; persistProfiles() }
     func profileBinding() -> Binding<ScanProfile> { Binding(get: { self.selectedProfile }, set: { self.updateProfile($0) }) }
-    func isSupported(_ source: ScanSource) -> Bool { capabilities?.sources.contains(source) ?? false }
-    func isSupported(_ mode: ScanColorMode) -> Bool { capabilities?.colorModes.contains(mode) ?? false }
-    func isSupported(_ dpi: Int) -> Bool { capabilities?.resolutionsDPI.contains(dpi) ?? false }
-    func isSupported(_ format: ScanOutputFormat) -> Bool { capabilities?.outputFormats.contains(format) ?? false }
+    func isSupported(_ source: ScanSource) -> Bool {
+        if let capabilities { return capabilities.sources.contains(source) }
+        return selectedIdentity?.connectionKind == .imageCapture && source != .adfBack
+    }
+    func isSupported(_ mode: ScanColorMode) -> Bool { capabilities?.colorModes.contains(mode) ?? (selectedIdentity?.connectionKind == .imageCapture) }
+    func isSupported(_ dpi: Int) -> Bool { capabilities?.resolutions(for: selectedProfile.options.source).contains(dpi) ?? (selectedIdentity?.connectionKind == .imageCapture) }
+    func isSupported(_ format: ScanOutputFormat) -> Bool { capabilities?.outputFormats.contains(format) ?? (selectedIdentity?.connectionKind == .imageCapture) }
 
     private func updateCapabilities() {
+        if selectedIdentity?.connectionKind == .imageCapture {
+            // Image Capture reports unit-specific settings only after an open
+            // session. Do not reject a saved profile based on guessed values.
+            capabilities = nil
+            return
+        }
         capabilities = selectedIdentity.flatMap { registry.capabilities(for: $0) }
         guard let capabilities else { return }
+        reconcileProfile(using: capabilities)
+    }
+
+    private func reconcileProfile(using capabilities: ScannerCapabilities) {
         var profile = selectedProfile
         if !capabilities.sources.contains(profile.options.source), let first = capabilities.sources.first { profile.options.source = first }
         if !capabilities.colorModes.contains(profile.options.colorMode), let first = capabilities.colorModes.first { profile.options.colorMode = first }
-        if !capabilities.resolutionsDPI.contains(profile.options.resolutionDPI), let nearest = capabilities.resolutionsDPI.min(by: { abs($0 - profile.options.resolutionDPI) < abs($1 - profile.options.resolutionDPI) }) { profile.options.resolutionDPI = nearest }
+        let sourceResolutions = capabilities.resolutions(for: profile.options.source)
+        if !sourceResolutions.contains(profile.options.resolutionDPI), let nearest = sourceResolutions.min(by: { abs($0 - profile.options.resolutionDPI) < abs($1 - profile.options.resolutionDPI) }) { profile.options.resolutionDPI = nearest }
         if !capabilities.outputFormats.contains(profile.options.outputFormat), let first = capabilities.outputFormats.first { profile.options.outputFormat = first }
         if !capabilities.supportsBlankPageRemoval { profile.options.removeBlankPages = false }
         if !capabilities.supportsDeskew { profile.options.deskew = false }

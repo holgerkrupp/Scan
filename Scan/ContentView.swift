@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 struct ContentView: View {
-    @State private var viewModel = ScannerWorkspaceViewModel()
+    @State private var viewModel = ScannerWorkspaceViewModel.shared
     var body: some View {
         NavigationSplitView {
             sidebar
@@ -37,7 +37,6 @@ struct ContentView: View {
                     }.tag(identity)
                 }
             }.listStyle(.sidebar)
-            Toggle("Show simulator", isOn: $viewModel.showsSimulator).onChange(of: viewModel.showsSimulator) { Task { await viewModel.refreshDevices() } }
         }.padding().navigationSplitViewColumnWidth(min: 270, ideal: 300)
     }
 
@@ -66,7 +65,17 @@ struct ContentView: View {
             Divider()
             HStack(spacing: 10) {
                 if viewModel.isScanning { Button(role: .cancel) { Task { await viewModel.cancelScan() } } label: { Label("Cancel", systemImage: "xmark.circle") } }
-                else { Button { Task { await viewModel.startScan() } } label: { Label("Scan", systemImage: "scanner") }.keyboardShortcut(.return, modifiers: .command).disabled(viewModel.selectedIdentity == nil) }
+                else {
+                    Button { Task { await viewModel.startScan() } } label: {
+                        Label("Scan", systemImage: "scanner")
+                            .font(.title3.weight(.semibold))
+                            .frame(minWidth: 150, minHeight: 42)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .disabled(viewModel.selectedIdentity == nil)
+                }
                 Button { Task { await viewModel.saveExport() } } label: { Label("Save/Export", systemImage: "square.and.arrow.down") }.disabled(viewModel.pages.isEmpty || viewModel.isScanning)
                 Button { viewModel.revealInFinder() } label: { Label("Reveal in Finder", systemImage: "folder") }.disabled(viewModel.lastOutputs.isEmpty)
                 Spacer()
@@ -89,7 +98,8 @@ struct ContentView: View {
                 Picker("Source", selection: profile(\.options.acquisition.source)) { ForEach(ScanSource.allCases) { Text($0.rawValue).tag($0).disabled(!viewModel.isSupported($0)) } }.pickerStyle(.menu)
                 Picker("Color mode", selection: profile(\.options.acquisition.colorMode)) { ForEach(ScanColorMode.allCases) { Text($0.rawValue).tag($0).disabled(!viewModel.isSupported($0)) } }
                 Picker("DPI", selection: profile(\.options.acquisition.resolutionDPI)) { ForEach([75, 100, 150, 200, 300, 400, 600], id: \.self) { Text("\($0) dpi").tag($0).disabled(!viewModel.isSupported($0)) } }
-                if let capabilities = viewModel.capabilities { Text("Supported: \(capabilities.resolutionsDPI.map(String.init).joined(separator: ", ")) dpi").font(.caption).foregroundStyle(.secondary) }
+                if let capabilities = viewModel.capabilities { Text("Supported: \(capabilities.resolutions(for: viewModel.selectedProfile.options.source).map(String.init).joined(separator: ", ")) dpi").font(.caption).foregroundStyle(.secondary) }
+                else if viewModel.selectedIdentity?.connectionKind == .imageCapture { Text("Device capabilities are read when the Image Capture session opens.").font(.caption).foregroundStyle(.secondary) }
             }
             Section("Image") {
                 Picker("Output", selection: profile(\.options.export.outputFormat)) { ForEach(ScanOutputFormat.allCases) { Text($0.rawValue).tag($0).disabled(!viewModel.isSupported($0)) } }

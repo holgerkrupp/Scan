@@ -12,7 +12,7 @@ struct USBDeviceID: Hashable, Sendable, Codable {
     var displayString: String { String(format: "0x%04x/0x%04x", vendorID, productID) }
 }
 
-enum ScannerConnectionKind: String, Sendable, Codable { case usb = "USB"; case imageCapture = "Image Capture"; case simulated = "Simulator" }
+enum ScannerConnectionKind: String, Sendable, Codable { case usb = "USB"; case imageCapture = "Image Capture" }
 
 struct ScannerIdentity: Identifiable, Hashable, Sendable, Codable {
     let name: String
@@ -98,15 +98,20 @@ struct ScanProfile: Identifiable, Hashable, Sendable, Codable {
 struct ScannerCapabilities: Equatable, Sendable, Codable {
     struct ScanArea: Equatable, Sendable, Codable { let width: Double; let height: Double; let unit: String }
     let sources: [ScanSource]; let colorModes: [ScanColorMode]; let resolutionsDPI: [Int]; let outputFormats: [ScanOutputFormat]
+    /// Some Image Capture devices expose different resolution sets for the
+    /// flatbed and document feeder.  Keep that distinction rather than
+    /// advertising a union that may fail after the user has selected a source.
+    let resolutionsBySource: [ScanSource: [Int]]
     let scanArea: ScanArea?
     let supportsBlankPageRemoval: Bool; let supportsDeskew: Bool; let supportsAutoCrop: Bool; let supportsAutoRotate: Bool; let supportsDuplex: Bool; let unsupportedReason: String?
-    init(sources: [ScanSource], colorModes: [ScanColorMode], resolutionsDPI: [Int], outputFormats: [ScanOutputFormat] = ScanOutputFormat.allCases, scanArea: ScanArea? = nil, supportsBlankPageRemoval: Bool, supportsDeskew: Bool, supportsAutoCrop: Bool, supportsAutoRotate: Bool = true, supportsDuplex: Bool, unsupportedReason: String? = nil) {
-        self.sources = sources; self.colorModes = colorModes; self.resolutionsDPI = resolutionsDPI; self.outputFormats = outputFormats; self.scanArea = scanArea; self.supportsBlankPageRemoval = supportsBlankPageRemoval; self.supportsDeskew = supportsDeskew; self.supportsAutoCrop = supportsAutoCrop; self.supportsAutoRotate = supportsAutoRotate; self.supportsDuplex = supportsDuplex; self.unsupportedReason = unsupportedReason
+    init(sources: [ScanSource], colorModes: [ScanColorMode], resolutionsDPI: [Int], resolutionsBySource: [ScanSource: [Int]] = [:], outputFormats: [ScanOutputFormat] = ScanOutputFormat.allCases, scanArea: ScanArea? = nil, supportsBlankPageRemoval: Bool, supportsDeskew: Bool, supportsAutoCrop: Bool, supportsAutoRotate: Bool = true, supportsDuplex: Bool, unsupportedReason: String? = nil) {
+        self.sources = sources; self.colorModes = colorModes; self.resolutionsDPI = resolutionsDPI; self.resolutionsBySource = resolutionsBySource; self.outputFormats = outputFormats; self.scanArea = scanArea; self.supportsBlankPageRemoval = supportsBlankPageRemoval; self.supportsDeskew = supportsDeskew; self.supportsAutoCrop = supportsAutoCrop; self.supportsAutoRotate = supportsAutoRotate; self.supportsDuplex = supportsDuplex; self.unsupportedReason = unsupportedReason
     }
+    func resolutions(for source: ScanSource) -> [Int] { resolutionsBySource[source] ?? resolutionsDPI }
     func validate(_ options: ScanOptions) throws {
         guard sources.contains(options.acquisition.source) else { throw ScannerError.unsupportedOption("Source \(options.acquisition.source.rawValue) is not supported.") }
         guard colorModes.contains(options.acquisition.colorMode) else { throw ScannerError.unsupportedOption("Mode \(options.acquisition.colorMode.rawValue) is not supported.") }
-        guard resolutionsDPI.contains(options.acquisition.resolutionDPI) else { throw ScannerError.unsupportedOption("Resolution \(options.acquisition.resolutionDPI) dpi is not supported.") }
+        guard resolutions(for: options.acquisition.source).contains(options.acquisition.resolutionDPI) else { throw ScannerError.unsupportedOption("Resolution \(options.acquisition.resolutionDPI) dpi is not supported for \(options.acquisition.source.rawValue).") }
         guard outputFormats.contains(options.export.outputFormat) else { throw ScannerError.unsupportedOption("\(options.export.outputFormat.rawValue) output is not supported by this scanner backend.") }
         if options.acquisition.source == .adfDuplex && !supportsDuplex { throw ScannerError.unsupportedOption("Duplex scanning is not supported.") }
         if options.processing.removeBlankPages && !supportsBlankPageRemoval { throw ScannerError.unsupportedOption("Blank-page removal is not available for this scanner.") }

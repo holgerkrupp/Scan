@@ -22,6 +22,30 @@ final class ScanCoreTests: XCTestCase {
         XCTAssertThrowsError(try capabilities.validate(options))
     }
 
+    func testCapabilitiesCanConstrainResolutionBySource() throws {
+        let capabilities = ScannerCapabilities(
+            sources: [.flatbed, .adfFront],
+            colorModes: [.color],
+            resolutionsDPI: [150, 300, 600],
+            resolutionsBySource: [.flatbed: [150, 300, 600], .adfFront: [150, 300]],
+            supportsBlankPageRemoval: true,
+            supportsDeskew: true,
+            supportsAutoCrop: true,
+            supportsDuplex: false
+        )
+        var options = ScanOptions(acquisition: AcquisitionSettings(source: .flatbed, colorMode: .color, resolutionDPI: 600))
+        XCTAssertNoThrow(try capabilities.validate(options))
+        options.acquisition.source = .adfFront
+        XCTAssertThrowsError(try capabilities.validate(options))
+    }
+
+    func testImageCaptureProgressIsNormalizedFromPercentage() {
+        XCTAssertEqual(ImageCaptureScannerDevice.normalizedProgress(0), 0)
+        XCTAssertEqual(ImageCaptureScannerDevice.normalizedProgress(57), 0.57)
+        XCTAssertEqual(ImageCaptureScannerDevice.normalizedProgress(150), 1)
+        XCTAssertEqual(ImageCaptureScannerDevice.normalizedProgress(-1), 0)
+    }
+
     func testProfilePersistenceRoundTrip() {
         let defaults = UserDefaults(suiteName: "ScanCoreTests-\(UUID().uuidString)")!
         var store = ScanProfileStore(defaults: defaults); var profile = ScanProfile.defaults[0]; profile.name = "Test profile"; store.save([profile]); store.selectedProfileID = profile.id
