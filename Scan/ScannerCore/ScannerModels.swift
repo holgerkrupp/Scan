@@ -53,7 +53,35 @@ enum ScanFileSizePreset: String, CaseIterable, Identifiable, Sendable, Codable {
 
 enum PageRotation: Int, CaseIterable, Identifiable, Sendable, Codable { case degrees0 = 0, degrees90 = 90, degrees180 = 180, degrees270 = 270; var id: Int { rawValue } }
 
-struct AcquisitionSettings: Hashable, Sendable, Codable { var source: ScanSource = .adfDuplex; var colorMode: ScanColorMode = .color; var resolutionDPI: Int = 300 }
+struct AcquisitionSettings: Hashable, Sendable, Codable {
+    var source: ScanSource = .adfDuplex
+    var colorMode: ScanColorMode = .color
+    var resolutionDPI: Int = 300
+    /// Ask the scanner to read ahead from the ADF into its own memory while the
+    /// host is still transferring the previous sheet. Only honoured by backends
+    /// whose capabilities report `supportsScannerBuffering`.
+    var scannerBuffering = false
+    /// Let the scanner compress pages to JPEG itself so far less data crosses
+    /// USB. The JPEG quality argument follows `ExportSettings.jpegQuality`.
+    /// Only honoured by backends whose capabilities report `supportsHardwareCompression`.
+    var hardwareCompression = false
+
+    init(source: ScanSource = .adfDuplex, colorMode: ScanColorMode = .color, resolutionDPI: Int = 300, scannerBuffering: Bool = false, hardwareCompression: Bool = false) {
+        self.source = source; self.colorMode = colorMode; self.resolutionDPI = resolutionDPI; self.scannerBuffering = scannerBuffering; self.hardwareCompression = hardwareCompression
+    }
+
+    private enum CodingKeys: String, CodingKey { case source, colorMode, resolutionDPI, scannerBuffering, hardwareCompression }
+
+    // Profiles saved before `scannerBuffering` existed must keep decoding.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        source = try container.decode(ScanSource.self, forKey: .source)
+        colorMode = try container.decode(ScanColorMode.self, forKey: .colorMode)
+        resolutionDPI = try container.decode(Int.self, forKey: .resolutionDPI)
+        scannerBuffering = try container.decodeIfPresent(Bool.self, forKey: .scannerBuffering) ?? false
+        hardwareCompression = try container.decodeIfPresent(Bool.self, forKey: .hardwareCompression) ?? false
+    }
+}
 struct ImageProcessingSettings: Hashable, Sendable, Codable {
     var removeBlankPages = false; var autoCrop = false; var deskew = false; var autoRotate = false; var rotation: PageRotation = .degrees0
 }
@@ -103,9 +131,14 @@ struct ScannerCapabilities: Equatable, Sendable, Codable {
     /// advertising a union that may fail after the user has selected a source.
     let resolutionsBySource: [ScanSource: [Int]]
     let scanArea: ScanArea?
-    let supportsBlankPageRemoval: Bool; let supportsDeskew: Bool; let supportsAutoCrop: Bool; let supportsAutoRotate: Bool; let supportsDuplex: Bool; let unsupportedReason: String?
-    init(sources: [ScanSource], colorModes: [ScanColorMode], resolutionsDPI: [Int], resolutionsBySource: [ScanSource: [Int]] = [:], outputFormats: [ScanOutputFormat] = ScanOutputFormat.allCases, scanArea: ScanArea? = nil, supportsBlankPageRemoval: Bool, supportsDeskew: Bool, supportsAutoCrop: Bool, supportsAutoRotate: Bool = true, supportsDuplex: Bool, unsupportedReason: String? = nil) {
-        self.sources = sources; self.colorModes = colorModes; self.resolutionsDPI = resolutionsDPI; self.resolutionsBySource = resolutionsBySource; self.outputFormats = outputFormats; self.scanArea = scanArea; self.supportsBlankPageRemoval = supportsBlankPageRemoval; self.supportsDeskew = supportsDeskew; self.supportsAutoCrop = supportsAutoCrop; self.supportsAutoRotate = supportsAutoRotate; self.supportsDuplex = supportsDuplex; self.unsupportedReason = unsupportedReason
+    let supportsBlankPageRemoval: Bool; let supportsDeskew: Bool; let supportsAutoCrop: Bool; let supportsAutoRotate: Bool; let supportsDuplex: Bool
+    /// The scanner can read ahead from the ADF into internal memory (Fujitsu "buffer mode").
+    let supportsScannerBuffering: Bool
+    /// The scanner can deliver pages as JPEG (Fujitsu window compression 0x81).
+    let supportsHardwareCompression: Bool
+    let unsupportedReason: String?
+    init(sources: [ScanSource], colorModes: [ScanColorMode], resolutionsDPI: [Int], resolutionsBySource: [ScanSource: [Int]] = [:], outputFormats: [ScanOutputFormat] = ScanOutputFormat.allCases, scanArea: ScanArea? = nil, supportsBlankPageRemoval: Bool, supportsDeskew: Bool, supportsAutoCrop: Bool, supportsAutoRotate: Bool = true, supportsDuplex: Bool, supportsScannerBuffering: Bool = false, supportsHardwareCompression: Bool = false, unsupportedReason: String? = nil) {
+        self.sources = sources; self.colorModes = colorModes; self.resolutionsDPI = resolutionsDPI; self.resolutionsBySource = resolutionsBySource; self.outputFormats = outputFormats; self.scanArea = scanArea; self.supportsBlankPageRemoval = supportsBlankPageRemoval; self.supportsDeskew = supportsDeskew; self.supportsAutoCrop = supportsAutoCrop; self.supportsAutoRotate = supportsAutoRotate; self.supportsDuplex = supportsDuplex; self.supportsScannerBuffering = supportsScannerBuffering; self.supportsHardwareCompression = supportsHardwareCompression; self.unsupportedReason = unsupportedReason
     }
     func resolutions(for source: ScanSource) -> [Int] { resolutionsBySource[source] ?? resolutionsDPI }
     func validate(_ options: ScanOptions) throws {
@@ -114,6 +147,8 @@ struct ScannerCapabilities: Equatable, Sendable, Codable {
         guard resolutions(for: options.acquisition.source).contains(options.acquisition.resolutionDPI) else { throw ScannerError.unsupportedOption("Resolution \(options.acquisition.resolutionDPI) dpi is not supported for \(options.acquisition.source.rawValue).") }
         guard outputFormats.contains(options.export.outputFormat) else { throw ScannerError.unsupportedOption("\(options.export.outputFormat.rawValue) output is not supported by this scanner backend.") }
         if options.acquisition.source == .adfDuplex && !supportsDuplex { throw ScannerError.unsupportedOption("Duplex scanning is not supported.") }
+        if options.acquisition.scannerBuffering && !supportsScannerBuffering { throw ScannerError.unsupportedOption("Scanner buffering is not available for this scanner.") }
+        if options.acquisition.hardwareCompression && !supportsHardwareCompression { throw ScannerError.unsupportedOption("Hardware JPEG compression is not available for this scanner.") }
         if options.processing.removeBlankPages && !supportsBlankPageRemoval { throw ScannerError.unsupportedOption("Blank-page removal is not available for this scanner.") }
         if options.processing.deskew && !supportsDeskew { throw ScannerError.unsupportedOption("Deskew is not available for this scanner.") }
         if options.processing.autoCrop && !supportsAutoCrop { throw ScannerError.unsupportedOption("Auto-crop is not available for this scanner.") }

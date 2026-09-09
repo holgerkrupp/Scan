@@ -78,20 +78,27 @@ final class ScanCoreTests: XCTestCase {
         XCTAssertEqual(result.count, 2); XCTAssertTrue(result.contains(native)); XCTAssertFalse(result.contains(imageCaptureDuplicate)); XCTAssertTrue(result.contains(other))
     }
 
-    func testLegacyScanSnapUSBModelsAreClaimedByTheNativeDriver() {
-        let driver = FujitsuScanSnapS1500Driver()
+    func testLegacyScanSnapUSBModelsAreClaimedByTheNativeDrivers() {
+        let legacyDriver = FujitsuScanSnapS1500Driver()
         let expected: Set<USBDeviceID> = [
             USBDeviceID(vendorID: 0x04c5, productID: 0x10fe),
             USBDeviceID(vendorID: 0x04c5, productID: 0x1135),
             USBDeviceID(vendorID: 0x04c5, productID: 0x1155),
             USBDeviceID(vendorID: 0x04c5, productID: 0x116f),
-            USBDeviceID(vendorID: 0x04c5, productID: 0x11a2),
-            USBDeviceID(vendorID: 0x04c5, productID: 0x132b)
+            USBDeviceID(vendorID: 0x04c5, productID: 0x11a2)
         ]
-        XCTAssertEqual(driver.supportedUSBDeviceIDs, expected)
+        XCTAssertEqual(legacyDriver.supportedUSBDeviceIDs, expected)
 
+        let s510 = ScannerIdentity(name: "ScanSnap S510M", manufacturer: "Fujitsu", model: "S510M", serialNumber: nil, connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x116f), locationID: 1)
+        XCTAssertEqual(legacyDriver.makeDevice(identity: s510, transport: nil).capabilities.resolutionsDPI, [150, 200, 300, 600])
+        let s1500 = ScannerIdentity(name: "ScanSnap S1500", manufacturer: "Fujitsu", model: "S1500", serialNumber: nil, connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x11a2), locationID: 1)
+        XCTAssertEqual(legacyDriver.makeDevice(identity: s1500, transport: nil).capabilities.resolutionsDPI, [150, 200, 300, 400, 600])
+
+        // The iX500 has its own driver and hardware-validated profile.
         let ix500 = ScannerIdentity(name: "ScanSnap iX500", manufacturer: "Fujitsu", model: "iX500", serialNumber: nil, connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x132b), locationID: 1)
-        let device = driver.makeDevice(identity: ix500, transport: nil)
+        XCTAssertFalse(legacyDriver.canDrive(ix500))
+        XCTAssertTrue(ScannerDriverRegistry.live.driver(for: ix500) is FujitsuScanSnapIX500Driver)
+        let device = FujitsuScanSnapIX500Driver().makeDevice(identity: ix500, transport: nil)
         XCTAssertEqual(device.capabilities.resolutionsDPI, [150, 200, 300, 600])
         XCTAssertTrue(device.capabilities.supportsDuplex)
     }
