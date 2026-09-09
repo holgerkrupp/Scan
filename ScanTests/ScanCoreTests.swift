@@ -22,6 +22,30 @@ final class ScanCoreTests: XCTestCase {
         XCTAssertThrowsError(try capabilities.validate(options))
     }
 
+    func testCapabilitiesCanConstrainResolutionBySource() throws {
+        let capabilities = ScannerCapabilities(
+            sources: [.flatbed, .adfFront],
+            colorModes: [.color],
+            resolutionsDPI: [150, 300, 600],
+            resolutionsBySource: [.flatbed: [150, 300, 600], .adfFront: [150, 300]],
+            supportsBlankPageRemoval: true,
+            supportsDeskew: true,
+            supportsAutoCrop: true,
+            supportsDuplex: false
+        )
+        var options = ScanOptions(acquisition: AcquisitionSettings(source: .flatbed, colorMode: .color, resolutionDPI: 600))
+        XCTAssertNoThrow(try capabilities.validate(options))
+        options.acquisition.source = .adfFront
+        XCTAssertThrowsError(try capabilities.validate(options))
+    }
+
+    func testImageCaptureProgressIsNormalizedFromPercentage() {
+        XCTAssertEqual(ImageCaptureScannerDevice.normalizedProgress(0), 0)
+        XCTAssertEqual(ImageCaptureScannerDevice.normalizedProgress(57), 0.57)
+        XCTAssertEqual(ImageCaptureScannerDevice.normalizedProgress(150), 1)
+        XCTAssertEqual(ImageCaptureScannerDevice.normalizedProgress(-1), 0)
+    }
+
     func testProfilePersistenceRoundTrip() {
         let defaults = UserDefaults(suiteName: "ScanCoreTests-\(UUID().uuidString)")!
         var store = ScanProfileStore(defaults: defaults); var profile = ScanProfile.defaults[0]; profile.name = "Test profile"; store.save([profile]); store.selectedProfileID = profile.id
@@ -54,6 +78,96 @@ final class ScanCoreTests: XCTestCase {
         XCTAssertEqual(result.count, 2); XCTAssertTrue(result.contains(native)); XCTAssertFalse(result.contains(imageCaptureDuplicate)); XCTAssertTrue(result.contains(other))
     }
 
+    func testLegacyScanSnapUSBModelsAreClaimedByTheNativeDrivers() {
+        let legacyDriver = FujitsuScanSnapS1500Driver()
+        let expected: Set<USBDeviceID> = [
+            USBDeviceID(vendorID: 0x04c5, productID: 0x10fe),
+            USBDeviceID(vendorID: 0x04c5, productID: 0x1135),
+            USBDeviceID(vendorID: 0x04c5, productID: 0x1155),
+            USBDeviceID(vendorID: 0x04c5, productID: 0x116f),
+            USBDeviceID(vendorID: 0x04c5, productID: 0x11a2)
+        ]
+        XCTAssertEqual(legacyDriver.supportedUSBDeviceIDs, expected)
+
+        let s510 = ScannerIdentity(name: "ScanSnap S510M", manufacturer: "Fujitsu", model: "S510M", serialNumber: nil, connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x116f), locationID: 1)
+        XCTAssertEqual(legacyDriver.makeDevice(identity: s510, transport: nil).capabilities.resolutionsDPI, [150, 200, 300, 600])
+        let s1500 = ScannerIdentity(name: "ScanSnap S1500", manufacturer: "Fujitsu", model: "S1500", serialNumber: nil, connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x11a2), locationID: 1)
+        XCTAssertEqual(legacyDriver.makeDevice(identity: s1500, transport: nil).capabilities.resolutionsDPI, [150, 200, 300, 400, 600])
+
+        // The iX500 has its own driver and hardware-validated profile.
+        let ix500 = ScannerIdentity(name: "ScanSnap iX500", manufacturer: "Fujitsu", model: "iX500", serialNumber: nil, connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x132b), locationID: 1)
+        XCTAssertFalse(legacyDriver.canDrive(ix500))
+        XCTAssertTrue(ScannerDriverRegistry.live.driver(for: ix500) is FujitsuScanSnapIX500Driver)
+        let device = FujitsuScanSnapIX500Driver().makeDevice(identity: ix500, transport: nil)
+        XCTAssertEqual(device.capabilities.resolutionsDPI, [150, 200, 300, 600])
+        XCTAssertTrue(device.capabilities.supportsDuplex)
+    }
+
+    func testS300DriverClaimsOnlyTheDirectUSBModels() {
+        let driver = FujitsuScanSnapS300Driver(firmwareProvider: { nil })
+        XCTAssertEqual(driver.supportedUSBDeviceIDs, [
+            USBDeviceID(vendorID: 0x04c5, productID: 0x1156),
+            USBDeviceID(vendorID: 0x04c5, productID: 0x117f)
+        ])
+
+        let identity = ScannerIdentity(
+            name: "ScanSnap S300",
+            manufacturer: "Fujitsu",
+            model: "S300",
+            serialNumber: nil,
+            connectionKind: .usb,
+            usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x1156),
+            locationID: 1
+        )
+        let device = driver.makeDevice(identity: identity, transport: nil)
+        XCTAssertEqual(device.capabilities.colorModes, [.color])
+        XCTAssertEqual(device.capabilities.resolutionsDPI, [150, 200, 300, 600])
+        XCTAssertTrue(device.capabilities.supportsDuplex)
+        XCTAssertNotNil(device.capabilities.unsupportedReason)
+    }
+
+    func testS300FirmwareContainerDropsHeaderAndRequiresFullPayload() throws {
+        var file = Data(repeating: 0xaa, count: 0x100)
+        file.append(Data((0..<ScanSnapS300CommandEngine.firmwarePayloadLength).map { UInt8(truncatingIfNeeded: $0) }))
+        let payload = try ScanSnapS300FirmwareStore.extractPayload(from: file)
+        XCTAssertEqual(payload.count, 0x10000)
+        XCTAssertEqual(payload.prefix(4), Data([0x00, 0x01, 0x02, 0x03]))
+        XCTAssertThrowsError(try ScanSnapS300FirmwareStore.extractPayload(from: Data(repeating: 0, count: 0x10000)))
+    }
+
+    func testS300FirmwareBootstrapAndIdentityProtocol() async throws {
+        var identityResponse = Data("FUJITSU ".utf8)
+        identityResponse.append(Data("ScanSnap S300   ".utf8))
+        identityResponse.append(Data(repeating: 0, count: 8))
+        XCTAssertEqual(identityResponse.count, 0x20)
+
+        let transport = ScriptedUSBTransport(reads: [
+            Data([0x00, 0x00]),
+            Data([0x06]),
+            Data([0x06]),
+            Data([0x06]),
+            Data([0x06]),
+            Data([0x10, 0x00]),
+            identityResponse
+        ])
+        let engine = ScanSnapS300CommandEngine(transport: transport)
+        let payload = Data(repeating: 0x01, count: ScanSnapS300CommandEngine.firmwarePayloadLength)
+        let result = try await engine.prepare(firmwarePayload: payload)
+        XCTAssertEqual(result, ScanSnapS300ProtocolIdentity(vendor: "FUJITSU", model: "ScanSnap S300"))
+
+        let writes = transport.capturedWrites()
+        XCTAssertEqual(writes.count, 9)
+        XCTAssertEqual(writes[0], Data([0x1b, 0x03]))
+        XCTAssertEqual(writes[1], Data([0x1b, 0x06]))
+        XCTAssertEqual(writes[2], Data([0x01, 0x00, 0x01, 0x00]))
+        XCTAssertEqual(writes[3], payload)
+        XCTAssertEqual(writes[4], Data([0x00]))
+        XCTAssertEqual(writes[5], Data([0x1b, 0x16]))
+        XCTAssertEqual(writes[6], Data([0x80]))
+        XCTAssertEqual(writes[7], Data([0x1b, 0x03]))
+        XCTAssertEqual(writes[8], Data([0x1b, 0x13]))
+    }
+
     private func makeFrame(pageIndex: Int, blank: Bool, width: Int = 300, height: Int = 400) throws -> PageFrame {
         let image = NSImage(size: NSSize(width: width, height: height)); image.lockFocus(); NSColor.white.setFill(); NSRect(x: 0, y: 0, width: width, height: height).fill(); if !blank { NSColor.black.setFill(); NSRect(x: 30, y: 40, width: width - 60, height: 20).fill() }; image.unlockFocus(); let tiff = try XCTUnwrap(image.tiffRepresentation); let rep = try XCTUnwrap(NSBitmapImageRep(data: tiff)); let data = try XCTUnwrap(rep.representation(using: .jpeg, properties: [.compressionFactor: 0.9])); return PageFrame(pageIndex: pageIndex, side: .front, pixelFormat: .jpeg, width: width, height: height, resolutionDPI: 300, data: data)
     }
@@ -63,4 +177,48 @@ private struct StaticDiscovery: ScannerDiscovery {
     let identities: [ScannerIdentity]
     init(_ identities: [ScannerIdentity]) { self.identities = identities }
     func discover() async -> [ScannerIdentity] { identities }
+}
+
+@MainActor
+private final class ScriptedUSBTransport: USBDeviceTransport, @unchecked Sendable {
+    let identity = ScannerIdentity(
+        name: "Scripted S300",
+        manufacturer: "Fujitsu",
+        model: "S300",
+        serialNumber: nil,
+        connectionKind: .usb,
+        usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x1156),
+        locationID: 1
+    )
+    var endpointSummary: String { "scripted bulk endpoints" }
+
+    private var reads: [Data]
+    private var writes: [Data] = []
+
+    init(reads: [Data]) {
+        self.reads = reads
+    }
+
+    func open() async throws {}
+    func close() async {}
+    func abort() async {}
+
+    func controlTransfer(request: USBControlRequest) async throws -> Data {
+        throw ScannerError.protocolNotImplemented("No control transfers in scripted transport.")
+    }
+
+    func bulkWrite(endpoint: UInt8, data: Data, timeoutMilliseconds: UInt32) async throws {
+        writes.append(data)
+    }
+
+    func bulkRead(endpoint: UInt8, length: Int, timeoutMilliseconds: UInt32) async throws -> Data {
+        guard !reads.isEmpty else {
+            throw ScannerError.transportUnavailable("Scripted transport has no queued read.")
+        }
+        return reads.removeFirst()
+    }
+
+    func capturedWrites() -> [Data] {
+        writes
+    }
 }

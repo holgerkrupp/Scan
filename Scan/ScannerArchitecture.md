@@ -20,16 +20,18 @@ The size presets are deliberately explicit:
 
 Acquisition DPI is sent to the scanner. Output DPI/downsampling and compression happen in the reusable output pipeline. Capabilities are validated before acquisition and unsupported controls are disabled with an explanation in the inspector.
 
-## Native ScanSnap backend (S1500/S1500M and iX500)
+## Native legacy ScanSnap SCSI-over-USB backend (S500, S510, S1500, iX500)
 
-`FujitsuScanSnapDevice` and its private SCSI-over-USB command engine are shared by the ScanSnap models. Each model contributes a `FujitsuScanSnapModelProfile` (USB IDs, capabilities, and explicit quirk flags) and a thin `ScannerDriver`:
+`FujitsuScanSnapDevice` and its private SCSI-over-USB command engine are shared by the Fujitsu SCSI-over-USB family. Each model contributes a `FujitsuScanSnapModelProfile` (USB IDs, capabilities, and explicit quirk flags); `FujitsuScanSnapS1500Driver` serves the S500/S500M, S510/S510M and S1500/S1500M profiles by USB product ID, and `FujitsuScanSnapIX500Driver` the iX500. The shared command flow remains the hardware path: inquiry, ADF setup, automatic document length, window setup, interleaved duplex reads, sense/status handling, and paper recovery.
 
-| Driver | USB ID | Profile |
+| Driver | USB IDs | Profile |
 | --- | --- | --- |
+| `FujitsuScanSnapS1500Driver` | `0x04c5/0x10fe`, `0x04c5/0x1135` | `.s500` (protocol-backed, S1500 flow without 400 dpi; not validated on hardware) |
+| `FujitsuScanSnapS1500Driver` | `0x04c5/0x1155`, `0x04c5/0x116f` | `.s510` (protocol-backed, S1500 flow without 400 dpi; not validated on hardware) |
 | `FujitsuScanSnapS1500Driver` | `0x04c5/0x11a2` | `.s1500` (validated reference path) |
-| `FujitsuScanSnapIX500Driver` | `0x04c5/0x132b` | `.ix500` |
+| `FujitsuScanSnapIX500Driver` | `0x04c5/0x132b` | `.ix500` (validated on hardware) |
 
-No other Fujitsu product ID is claimed. The command flow remains the hardware path: inquiry, ADF setup, automatic document length, window setup, interleaved duplex reads, sense/status handling, and paper recovery.
+No other Fujitsu product ID is claimed by these drivers.
 
 The iX500 profile follows the quirks documented in SANE's `fujitsu.c` `init_model()`:
 
@@ -62,9 +64,36 @@ The downloadable gamma table (`FujitsuGammaTable`, SEND type 0x83) is built like
 
 The command engine never makes output-format compression decisions beyond that pass-through. Cancellation sets a terminal cancellation flag before aborting transfers, so a late transport error cannot replace cancellation with a generic failure. Partial pages remain in the review workspace.
 
+## Experimental ScanSnap S300 direct-USB backend
+
+`FujitsuScanSnapS300Driver` separately matches the S300 (`0x1156`) and S300M
+(`0x117f`). These scanners do not use the SCSI-over-USB command wrapper. The
+backend implements direct bulk status, firmware upload/checksum,
+reinitialization, and identity exchanges. The required Fujitsu firmware is
+not redistributable, so the user chooses it and the app retains a
+security-scoped bookmark. Model-specific calibration and image acquisition
+remain disabled until they have an independently implemented command model
+and can be exercised against physical hardware.
+
 ## Image Capture backend and discovery
 
-`CompositeScannerDiscovery` combines the native USB enumerator with `ICDeviceBrowser`. If both layers report the same USB vendor/product, serial, or location, the native identity wins. Image Capture maps flatbed/document-feeder units, duplex availability, supported resolutions, scan area, progress, cancellation, and file-based received pages into `ScannerDevice`.
+`CompositeScannerDiscovery` combines the native USB enumerator with a long-lived
+`ICDeviceBrowser`. The browser watches local, shared, Bonjour, and Bluetooth
+scanner locations, retains the Image Capture device objects needed to open a
+session, and retains its non-owning delegate for the app lifetime. If both
+layers report the same USB vendor/product, serial, or location, the native
+identity wins.
+
+Image Capture opens and closes through its async session APIs. It waits for
+each `requestSelect` delegate callback before reading or configuring the
+selected unit. Flatbed and feeder resolutions are retained per source so a
+flatbed-only DPI is never presented as an ADF option. The backend uses a unique
+file-transfer directory and document name for every job, imports each delivered
+file before removing the transfer copy, maps its actual content type, and
+normalizes Image Capture's 0–100 progress value to the workspace's 0–1 range.
+The framework does not expose an ADF-back-only functional unit, so only front
+and duplex are advertised; duplex page side is marked unknown rather than
+invented.
 
 Devices discovered without a matching driver remain visible as “Discovered, unsupported”; they are never silently treated as ScanSnap devices.
 
@@ -74,4 +103,4 @@ Devices discovered without a matching driver remain visible as “Discovered, un
 2. Add only verified USB IDs to that driver’s `supportedUSBDeviceIDs`.
 3. Add the driver to `ScannerDriverRegistry.live` after its transport/protocol tests pass.
 4. Add a hardware validation matrix covering enumeration, open/close, every advertised source/color/DPI combination, simplex/duplex ordering, page dimensions, cancellation, empty feeder, jam/double-feed, disconnect, and partial-batch recovery.
-5. Keep simulated fixtures and automated tests independent of physical hardware: add transcript scenarios for the new profile to `FujitsuCommandTranscriptTests` (record them with the scripted transport once the sequence has been validated on the device). Do not claim support for an additional Fujitsu model until that matrix has been run on the device.
+5. Keep simulated fixtures and automated tests independent of physical hardware: add transcript scenarios for the new profile to `FujitsuCommandTranscriptTests` (record them with the scripted transport once the sequence has been validated on the device). The S500/S510 profiles are protocol-backed only; physical validation of each model is still required before release claims are made. The S1300/S1300i and S1100/S1100i models are not included because their epjitsu protocol is different.

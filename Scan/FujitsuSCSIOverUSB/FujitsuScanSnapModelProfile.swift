@@ -81,6 +81,54 @@ struct FujitsuScanSnapModelProfile: Sendable {
         lookupTableInputBits: 10
     )
 
+    /// ScanSnap S500 / S500M: same SCSI-over-USB command flow as the S1500,
+    /// no 400 dpi step. Protocol-backed profile, not yet validated on hardware.
+    static let s500 = FujitsuScanSnapModelProfile(
+        name: "Fujitsu ScanSnap S500/S500M",
+        usbDeviceIDs: [USBDeviceID(vendorID: 0x04c5, productID: 0x10fe), USBDeviceID(vendorID: 0x04c5, productID: 0x1135)],
+        capabilities: Self.legacyCapabilities(resolutionsDPI: [150, 200, 300, 600]),
+        sendsDiagnosticPreread: false,
+        sendsJPEGQuantizationTable: false,
+        checksHopperBeforeFirstFeed: false,
+        waitsForReadyAfterFeed: true,
+        emulatesMonochromeInSoftware: false,
+        pixelsPerLineModulus: 1,
+        probesColorInterlace: false,
+        toleratesModeSelectFailures: false,
+        transferChunkSize: 32 * 1024,
+        lookupTableInputBits: 10
+    )
+
+    /// ScanSnap S510 / S510M: same SCSI-over-USB command flow as the S1500,
+    /// no 400 dpi step. Protocol-backed profile, not yet validated on hardware.
+    static let s510 = FujitsuScanSnapModelProfile(
+        name: "Fujitsu ScanSnap S510/S510M",
+        usbDeviceIDs: [USBDeviceID(vendorID: 0x04c5, productID: 0x1155), USBDeviceID(vendorID: 0x04c5, productID: 0x116f)],
+        capabilities: Self.legacyCapabilities(resolutionsDPI: [150, 200, 300, 600]),
+        sendsDiagnosticPreread: false,
+        sendsJPEGQuantizationTable: false,
+        checksHopperBeforeFirstFeed: false,
+        waitsForReadyAfterFeed: true,
+        emulatesMonochromeInSoftware: false,
+        pixelsPerLineModulus: 1,
+        probesColorInterlace: false,
+        toleratesModeSelectFailures: false,
+        transferChunkSize: 32 * 1024,
+        lookupTableInputBits: 10
+    )
+
+    private static func legacyCapabilities(resolutionsDPI: [Int]) -> ScannerCapabilities {
+        ScannerCapabilities(
+            sources: [.adfFront, .adfBack, .adfDuplex],
+            colorModes: [.color, .gray, .lineart],
+            resolutionsDPI: resolutionsDPI,
+            supportsBlankPageRemoval: true,
+            supportsDeskew: true,
+            supportsAutoCrop: true,
+            supportsDuplex: true
+        )
+    }
+
     /// Fujitsu ScanSnap iX500. Quirks follow SANE `fujitsu.c` `init_model()`:
     /// `need_q_table`, `need_diag_preread`, `ppl_mod_by_mode[COLOR] = 2`,
     /// `hopper_before_op`, `no_wait_after_op`, and software-emulated
@@ -91,7 +139,8 @@ struct FujitsuScanSnapModelProfile: Sendable {
         capabilities: ScannerCapabilities(
             sources: [.adfFront, .adfBack, .adfDuplex],
             colorModes: [.color, .gray, .lineart],
-            resolutionsDPI: [150, 200, 300, 400, 600],
+            // 150/300/600 validated on hardware; 400 dpi is not advertised.
+            resolutionsDPI: [150, 200, 300, 600],
             supportsBlankPageRemoval: true,
             supportsDeskew: true,
             supportsAutoCrop: true,

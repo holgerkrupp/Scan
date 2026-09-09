@@ -20,7 +20,7 @@ final class FujitsuScanSnapDriverTests: XCTestCase {
         XCTAssertEqual(capabilities, FujitsuScanSnapModelProfile.ix500.capabilities)
         XCTAssertEqual(capabilities?.supportsDuplex, true)
         XCTAssertEqual(capabilities?.colorModes, [.color, .gray, .lineart])
-        XCTAssertEqual(capabilities?.resolutionsDPI, [150, 200, 300, 400, 600])
+        XCTAssertEqual(capabilities?.resolutionsDPI, [150, 200, 300, 600])
     }
 
     func testS1500DriverStillClaimsOnlyItsValidatedID() {

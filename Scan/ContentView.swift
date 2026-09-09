@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 struct ContentView: View {
-    @State private var viewModel = ScannerWorkspaceViewModel()
+    @State private var viewModel = ScannerWorkspaceViewModel.shared
     var body: some View {
         NavigationSplitView {
             sidebar
@@ -20,16 +20,23 @@ struct ContentView: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack { Label("Scanners", systemImage: "scanner").font(.headline); Spacer(); Button { Task { await viewModel.refreshDevices() } } label: { Image(systemName: "arrow.clockwise") }.disabled(viewModel.isRefreshing) }
-            Text("Native S1500/S1500M and iX500 USB plus Image Capture").font(.caption).foregroundStyle(.secondary)
+            Text("Legacy ScanSnap USB (S300 experimental) plus Image Capture").font(.caption).foregroundStyle(.secondary)
             List(selection: Binding(get: { viewModel.selectedIdentity }, set: { viewModel.selectedIdentity = $0 })) {
                 ForEach(viewModel.discoveredIdentities) { identity in
+                    let capabilities = viewModel.capabilities(for: identity)
                     VStack(alignment: .leading, spacing: 3) {
-                        HStack { Text(identity.name).font(.subheadline.weight(.medium)); Spacer(); if viewModel.capabilities(for: identity) == nil { Image(systemName: "questionmark.circle").foregroundStyle(.orange) } }
-                        Text(viewModel.capabilities(for: identity) == nil ? "Discovered, unsupported" : identity.subtitle).font(.caption).foregroundStyle(viewModel.capabilities(for: identity) == nil ? .orange : .secondary)
+                        HStack {
+                            Text(identity.name).font(.subheadline.weight(.medium))
+                            Spacer()
+                            if capabilities == nil { Image(systemName: "questionmark.circle").foregroundStyle(.orange) }
+                            else if capabilities?.unsupportedReason != nil { Image(systemName: "exclamationmark.triangle").foregroundStyle(.yellow) }
+                        }
+                        Text(capabilities?.unsupportedReason ?? (capabilities == nil ? "Discovered, unsupported" : identity.subtitle))
+                            .font(.caption)
+                            .foregroundStyle(capabilities == nil ? .orange : .secondary)
                     }.tag(identity)
                 }
             }.listStyle(.sidebar)
-            Toggle("Show simulator", isOn: $viewModel.showsSimulator).onChange(of: viewModel.showsSimulator) { Task { await viewModel.refreshDevices() } }
         }.padding().navigationSplitViewColumnWidth(min: 270, ideal: 300)
     }
 
@@ -58,7 +65,17 @@ struct ContentView: View {
             Divider()
             HStack(spacing: 10) {
                 if viewModel.isScanning { Button(role: .cancel) { Task { await viewModel.cancelScan() } } label: { Label("Cancel", systemImage: "xmark.circle") } }
-                else { Button { Task { await viewModel.startScan() } } label: { Label("Scan", systemImage: "scanner") }.keyboardShortcut(.return, modifiers: .command).disabled(viewModel.selectedIdentity == nil) }
+                else {
+                    Button { Task { await viewModel.startScan() } } label: {
+                        Label("Scan", systemImage: "scanner")
+                            .font(.title3.weight(.semibold))
+                            .frame(minWidth: 150, minHeight: 42)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .disabled(viewModel.selectedIdentity == nil)
+                }
                 Button { Task { await viewModel.saveExport() } } label: { Label("Save/Export", systemImage: "square.and.arrow.down") }.disabled(viewModel.pages.isEmpty || viewModel.isScanning)
                 Button { viewModel.revealInFinder() } label: { Label("Reveal in Finder", systemImage: "folder") }.disabled(viewModel.lastOutputs.isEmpty)
                 Spacer()
@@ -81,7 +98,8 @@ struct ContentView: View {
                 Picker("Source", selection: profile(\.options.acquisition.source)) { ForEach(ScanSource.allCases) { Text($0.rawValue).tag($0).disabled(!viewModel.isSupported($0)) } }.pickerStyle(.menu)
                 Picker("Color mode", selection: profile(\.options.acquisition.colorMode)) { ForEach(ScanColorMode.allCases) { Text($0.rawValue).tag($0).disabled(!viewModel.isSupported($0)) } }
                 Picker("DPI", selection: profile(\.options.acquisition.resolutionDPI)) { ForEach([75, 100, 150, 200, 300, 400, 600], id: \.self) { Text("\($0) dpi").tag($0).disabled(!viewModel.isSupported($0)) } }
-                if let capabilities = viewModel.capabilities { Text("Supported: \(capabilities.resolutionsDPI.map(String.init).joined(separator: ", ")) dpi").font(.caption).foregroundStyle(.secondary) }
+                if let capabilities = viewModel.capabilities { Text("Supported: \(capabilities.resolutions(for: viewModel.selectedProfile.options.source).map(String.init).joined(separator: ", ")) dpi").font(.caption).foregroundStyle(.secondary) }
+                else if viewModel.selectedIdentity?.connectionKind == .imageCapture { Text("Device capabilities are read when the Image Capture session opens.").font(.caption).foregroundStyle(.secondary) }
                 capabilityToggle("Scanner buffering", value: profile(\.options.acquisition.scannerBuffering), supported: viewModel.capabilities?.supportsScannerBuffering ?? false, reason: "This scanner does not expose ADF read-ahead buffering.")
                 capabilityToggle("Hardware JPEG compression", value: profile(\.options.acquisition.hardwareCompression), supported: viewModel.capabilities?.supportsHardwareCompression ?? false, reason: "This scanner cannot compress pages itself.")
             }
@@ -108,6 +126,14 @@ struct ContentView: View {
                 capabilityToggle("Automatic orientation", value: profile(\.options.processing.autoRotate), supported: viewModel.capabilities?.supportsAutoRotate ?? false, reason: "Automatic orientation is unavailable for this backend.")
             }
             Section("Diagnostics") {
+                if viewModel.selectedScannerUsesS300Protocol {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Button("Choose S300 firmware…") { viewModel.chooseS300Firmware() }
+                        Text(viewModel.s300FirmwareFilename.map { "S300 firmware: \($0)" } ?? "S300 firmware is not selected")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 DisclosureGroup("Activity log", isExpanded: $viewModel.diagnosticsExpanded) { Button("Copy log") { viewModel.copyActivityLog() }; ScrollView { Text(viewModel.activityLog.reversed().joined(separator: "\n")).font(.caption.monospaced()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(minHeight: 100, maxHeight: 220) }
                 if !viewModel.lastOutputs.isEmpty { Text("Last export: \(ByteCountFormatter.string(fromByteCount: viewModel.lastOutputByteCount, countStyle: .file))").font(.caption) }
             }
