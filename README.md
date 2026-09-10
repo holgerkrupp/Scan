@@ -1,5 +1,13 @@
 Basic app to use legacy Fujitsu ScanSnap scanners on modern macOS.
 
+## Building
+
+Signing uses the team set in `Config/Shared.xcconfig`. To build with your own
+Apple Developer team, copy `Config/Local.xcconfig.example` to
+`Config/Local.xcconfig` (ignored by git) and set `DEVELOPMENT_TEAM` there.
+Leave the team in Xcode's Signing & Capabilities pane untouched: choosing one
+there writes it into the project file, which overrides the configuration files.
+
 ## Shortcuts and automation
 
 Scan publishes three App Intents to Shortcuts and Siri: **Scan Document**,
