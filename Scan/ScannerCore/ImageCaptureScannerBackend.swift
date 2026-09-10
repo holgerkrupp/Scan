@@ -13,6 +13,7 @@ final class ImageCaptureScannerDiscovery: NSObject, ScannerDiscovery, ICDeviceBr
     private var devices: [String: ICScannerDevice] = [:]
     private var continuation: CheckedContinuation<[ScannerIdentity], Never>?
     private var didEnumerateLocalDevices = false
+    private var onChange: (@MainActor () -> Void)?
 
     /// Scanner plus every Image Capture location. The browser notifies local
     /// completion first; remote devices remain observable in the live cache.
@@ -34,6 +35,11 @@ final class ImageCaptureScannerDiscovery: NSObject, ScannerDiscovery, ICDeviceBr
         }
     }
 
+    func observeChanges(_ onChange: @escaping @MainActor () -> Void) {
+        self.onChange = onChange
+        startIfNeeded()
+    }
+
     func scanner(matching identity: ScannerIdentity) -> ICScannerDevice? {
         if let scanner = devices[identity.id] { return scanner }
         return devices.values.first(where: { candidate in
@@ -46,11 +52,13 @@ final class ImageCaptureScannerDiscovery: NSObject, ScannerDiscovery, ICDeviceBr
     func deviceBrowser(_ browser: ICDeviceBrowser, didAdd device: ICDevice, moreComing: Bool) {
         guard let scanner = device as? ICScannerDevice else { return }
         devices[Self.identity(for: scanner).id] = scanner
+        notifyChangeAfterEnumeration()
     }
 
     func deviceBrowser(_ browser: ICDeviceBrowser, didRemove device: ICDevice, moreGoing: Bool) {
         guard let scanner = device as? ICScannerDevice else { return }
         devices.removeValue(forKey: Self.identity(for: scanner).id)
+        notifyChangeAfterEnumeration()
     }
 
     func deviceBrowserDidEnumerateLocalDevices(_ browser: ICDeviceBrowser) {
@@ -71,6 +79,12 @@ final class ImageCaptureScannerDiscovery: NSObject, ScannerDiscovery, ICDeviceBr
         browser.browsedDeviceTypeMask = Self.scannerMask
         self.browser = browser
         browser.start()
+    }
+
+    /// Devices reported during the initial enumeration belong to the first
+    /// snapshot; only later additions and removals are changes.
+    private func notifyChangeAfterEnumeration() {
+        if didEnumerateLocalDevices { onChange?() }
     }
 
     private func finishSnapshot() {
@@ -97,6 +111,10 @@ final class CompositeScannerDiscovery: ScannerDiscovery {
     private let native: ScannerDiscovery
     private let imageCapture: ScannerDiscovery
     init(native: ScannerDiscovery = USBScannerDiscovery(), imageCapture: ScannerDiscovery = ImageCaptureScannerDiscovery.shared) { self.native = native; self.imageCapture = imageCapture }
+    func observeChanges(_ onChange: @escaping @MainActor () -> Void) {
+        native.observeChanges(onChange)
+        imageCapture.observeChanges(onChange)
+    }
     func discover() async -> [ScannerIdentity] {
         let (nativeDevices, imageCaptureDevices) = await (native.discover(), imageCapture.discover())
         var result = nativeDevices

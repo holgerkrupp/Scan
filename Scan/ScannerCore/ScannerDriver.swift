@@ -28,6 +28,14 @@ extension ScannerDriver {
 
 protocol ScannerDiscovery {
     func discover() async -> [ScannerIdentity]
+    /// Calls `onChange` whenever a scanner may have been connected or
+    /// disconnected, so callers can refresh without polling.
+    func observeChanges(_ onChange: @escaping @MainActor () -> Void)
+}
+
+extension ScannerDiscovery {
+    /// Discoveries without live notifications only support explicit refreshes.
+    func observeChanges(_ onChange: @escaping @MainActor () -> Void) {}
 }
 
 protocol USBDeviceTransport: Sendable {
