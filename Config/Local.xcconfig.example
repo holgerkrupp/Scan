@@ -1,0 +1,4 @@
+// Machine-specific overrides for Shared.xcconfig. Copy this file to
+// Local.xcconfig (ignored by git) and adjust the values.
+
+// DEVELOPMENT_TEAM = ABCDE12345
