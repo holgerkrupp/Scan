@@ -78,6 +78,30 @@ final class ScanCoreTests: XCTestCase {
         XCTAssertEqual(result.count, 2); XCTAssertTrue(result.contains(native)); XCTAssertFalse(result.contains(imageCaptureDuplicate)); XCTAssertTrue(result.contains(other))
     }
 
+    func testDiscoveryChangesTriggerOneCoalescedAutomaticRefresh() async throws {
+        let scanner = ScannerIdentity(name: "Hot-plugged S1500", manufacturer: "Fujitsu", model: "S1500", serialNumber: "H1", connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x11a2), locationID: 3)
+        let discovery = ObservableDiscovery()
+        let viewModel = try makeViewModel(discovery: discovery)
+        discovery.identities = [scanner]
+        discovery.simulateChange(); discovery.simulateChange()
+        try await waitUntil { viewModel.discoveredIdentities == [scanner] && !viewModel.isRefreshing }
+        XCTAssertEqual(viewModel.selectedIdentity, scanner); XCTAssertEqual(viewModel.status, .idle); XCTAssertEqual(discovery.discoverCount, 1)
+    }
+
+    func testAutomaticRefreshWaitsForRunningScanAndKeepsUnreadError() async throws {
+        let scanner = ScannerIdentity(name: "Attached S1500", manufacturer: "Fujitsu", model: "S1500", serialNumber: "A1", connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x11a2), locationID: 4)
+        let discovery = ObservableDiscovery(identities: [scanner])
+        let viewModel = try makeViewModel(discovery: discovery)
+        await viewModel.refreshDevices()
+        viewModel.isScanning = true
+        discovery.simulateChange()
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(discovery.discoverCount, 1, "No refresh may run while a scan is in progress.")
+        viewModel.status = .error("Paper jam"); viewModel.isScanning = false
+        try await waitUntil { discovery.discoverCount == 2 && !viewModel.isRefreshing }
+        XCTAssertEqual(viewModel.selectedIdentity, scanner); XCTAssertEqual(viewModel.status, .error("Paper jam"))
+    }
+
     func testLegacyScanSnapUSBModelsAreClaimedByTheNativeDrivers() {
         let legacyDriver = FujitsuScanSnapS1500Driver()
         let expected: Set<USBDeviceID> = [
@@ -168,6 +192,21 @@ final class ScanCoreTests: XCTestCase {
         XCTAssertEqual(writes[8], Data([0x1b, 0x13]))
     }
 
+    private func makeViewModel(discovery: ScannerDiscovery) throws -> ScannerWorkspaceViewModel {
+        let suiteName = "ScanCoreTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        addTeardownBlock { UserDefaults().removePersistentDomain(forName: suiteName) }
+        return ScannerWorkspaceViewModel(discovery: discovery, registry: .live, outputWriter: ScanOutputWriter(), profileStore: ScanProfileStore(defaults: defaults), automaticRefreshDelay: .milliseconds(20))
+    }
+
+    private func waitUntil(timeout: Duration = .seconds(2), _ condition: () -> Bool) async throws {
+        let deadline = ContinuousClock.now + timeout
+        while !condition() {
+            guard ContinuousClock.now < deadline else { return XCTFail("Condition not met within \(timeout).") }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+
     private func makeFrame(pageIndex: Int, blank: Bool, width: Int = 300, height: Int = 400) throws -> PageFrame {
         let image = NSImage(size: NSSize(width: width, height: height)); image.lockFocus(); NSColor.white.setFill(); NSRect(x: 0, y: 0, width: width, height: height).fill(); if !blank { NSColor.black.setFill(); NSRect(x: 30, y: 40, width: width - 60, height: 20).fill() }; image.unlockFocus(); let tiff = try XCTUnwrap(image.tiffRepresentation); let rep = try XCTUnwrap(NSBitmapImageRep(data: tiff)); let data = try XCTUnwrap(rep.representation(using: .jpeg, properties: [.compressionFactor: 0.9])); return PageFrame(pageIndex: pageIndex, side: .front, pixelFormat: .jpeg, width: width, height: height, resolutionDPI: 300, data: data)
     }
@@ -177,6 +216,17 @@ private struct StaticDiscovery: ScannerDiscovery {
     let identities: [ScannerIdentity]
     init(_ identities: [ScannerIdentity]) { self.identities = identities }
     func discover() async -> [ScannerIdentity] { identities }
+}
+
+@MainActor
+private final class ObservableDiscovery: ScannerDiscovery {
+    var identities: [ScannerIdentity]
+    private(set) var discoverCount = 0
+    private var onChange: (@MainActor () -> Void)?
+    init(identities: [ScannerIdentity] = []) { self.identities = identities }
+    func discover() async -> [ScannerIdentity] { discoverCount += 1; return identities }
+    func observeChanges(_ onChange: @escaping @MainActor () -> Void) { self.onChange = onChange }
+    func simulateChange() { onChange?() }
 }
 
 @MainActor

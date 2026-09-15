@@ -4,6 +4,7 @@ import IOKit.usb
 
 final class USBScannerDiscovery: ScannerDiscovery {
     private let matchingVendorIDs: Set<UInt16>
+    private var monitor: USBDeviceMonitor?
 
     init(matchingVendorIDs: Set<UInt16> = [0x04c5]) {
         self.matchingVendorIDs = matchingVendorIDs
@@ -11,6 +12,53 @@ final class USBScannerDiscovery: ScannerDiscovery {
 
     func discover() async -> [ScannerIdentity] {
         USBDeviceEnumerator().discoverDevices(matchingVendorIDs: matchingVendorIDs)
+    }
+
+    func observeChanges(_ onChange: @escaping @MainActor () -> Void) {
+        monitor = USBDeviceMonitor(matchingVendorIDs: matchingVendorIDs, onChange: onChange)
+    }
+}
+
+/// Watches the IORegistry for USB devices of the given vendors being attached
+/// or detached. Notifications are delivered on the main queue.
+final class USBDeviceMonitor {
+    private let port: IONotificationPortRef
+    private var iterators: [io_iterator_t] = []
+    private let onChange: @MainActor () -> Void
+
+    init(matchingVendorIDs: Set<UInt16>, onChange: @escaping @MainActor () -> Void) {
+        self.onChange = onChange
+        port = IONotificationPortCreate(kIOMainPortDefault)
+        IONotificationPortSetDispatchQueue(port, .main)
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        for vendorID in matchingVendorIDs {
+            for notification in [kIOFirstMatchNotification, kIOTerminatedNotification] {
+                let matching = IOServiceMatching(kIOUSBDeviceClassName) as NSMutableDictionary
+                // USB matching rules ignore idVendor on its own, so compare it as a plain registry property.
+                matching[kIOPropertyMatchKey] = ["idVendor": NSNumber(value: vendorID)]
+                var iterator: io_iterator_t = 0
+                let result = IOServiceAddMatchingNotification(port, notification, matching as CFDictionary, { refcon, iterator in
+                    guard let refcon else { return }
+                    MainActor.assumeIsolated {
+                        USBDeviceMonitor.drain(iterator)
+                        Unmanaged<USBDeviceMonitor>.fromOpaque(refcon).takeUnretainedValue().onChange()
+                    }
+                }, refcon, &iterator)
+                guard result == KERN_SUCCESS else { continue }
+                // Draining arms the notification; devices already attached are not a change.
+                Self.drain(iterator)
+                iterators.append(iterator)
+            }
+        }
+    }
+
+    deinit {
+        iterators.forEach { IOObjectRelease($0) }
+        IONotificationPortDestroy(port)
+    }
+
+    private static func drain(_ iterator: io_iterator_t) {
+        while case let service = IOIteratorNext(iterator), service != 0 { IOObjectRelease(service) }
     }
 }
 

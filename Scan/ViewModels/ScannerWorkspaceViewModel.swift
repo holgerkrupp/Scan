@@ -55,11 +55,13 @@ final class ScannerWorkspaceViewModel {
     private var pageStore: ScanPageStore?
     private var traceObserver: NSObjectProtocol?
     private let s300FirmwareStore: ScanSnapS300FirmwareStore
+    private let automaticRefreshDelay: Duration
+    private var automaticRefreshTask: Task<Void, Never>?
 
     convenience init() { self.init(discovery: CompositeScannerDiscovery(), registry: .live, outputWriter: ScanOutputWriter(), profileStore: ScanProfileStore(defaults: .standard)) }
 
-    init(discovery: ScannerDiscovery, registry: ScannerDriverRegistry, outputWriter: ScanOutputWriter, profileStore: ScanProfileStore) {
-        self.discovery = discovery; self.registry = registry; self.outputWriter = outputWriter; self.profileStore = profileStore
+    init(discovery: ScannerDiscovery, registry: ScannerDriverRegistry, outputWriter: ScanOutputWriter, profileStore: ScanProfileStore, automaticRefreshDelay: Duration = .seconds(1)) {
+        self.discovery = discovery; self.registry = registry; self.outputWriter = outputWriter; self.profileStore = profileStore; self.automaticRefreshDelay = automaticRefreshDelay
         let firmwareStore = ScanSnapS300FirmwareStore(defaults: .standard)
         self.s300FirmwareStore = firmwareStore
         self.s300FirmwareFilename = firmwareStore.selectedFilename
@@ -72,15 +74,33 @@ final class ScannerWorkspaceViewModel {
             guard let message = note.userInfo?[ScanTrace.messageKey] as? String else { return }
             Task { @MainActor [weak self] in self?.log(message) }
         }
+        discovery.observeChanges { [weak self] in self?.scheduleAutomaticRefresh() }
     }
 
-    func refreshDevices() async {
+    func refreshDevices() async { await refreshDevices(isAutomatic: false) }
+
+    private func refreshDevices(isAutomatic: Bool) async {
         isRefreshing = true; defer { isRefreshing = false }
+        let previousSelectionID = selectedIdentity?.id
         let identities = await discovery.discover()
         discoveredIdentities = identities
         if selectedIdentity == nil || !identities.contains(where: { $0.id == selectedIdentity?.id }) { selectedIdentity = identities.first }
-        status = selectedIdentity == nil ? .disconnected : .idle
+        // An automatic refresh keeps the current status (such as an unread scan error) unless the selected scanner changed.
+        if !isAutomatic || selectedIdentity?.id != previousSelectionID { status = selectedIdentity == nil ? .disconnected : .idle }
         log("Discovered \(identities.count) scanner candidate\(identities.count == 1 ? "" : "s").")
+    }
+
+    /// Plugging in a scanner fires several notifications (USB and Image Capture), so they are coalesced into one refresh.
+    /// A refresh resets the scan status, so it waits until a running scan has finished.
+    private func scheduleAutomaticRefresh() {
+        automaticRefreshTask?.cancel()
+        automaticRefreshTask = Task { [weak self, automaticRefreshDelay] in
+            try? await Task.sleep(for: automaticRefreshDelay)
+            while self?.isScanning == true, !Task.isCancelled { try? await Task.sleep(for: automaticRefreshDelay) }
+            guard !Task.isCancelled, let self else { return }
+            self.log("Scanner connection change detected.")
+            await self.refreshDevices(isAutomatic: true)
+        }
     }
 
     func capabilities(for identity: ScannerIdentity) -> ScannerCapabilities? { registry.capabilities(for: identity) }
