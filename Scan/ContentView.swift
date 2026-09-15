@@ -14,6 +14,7 @@ struct ContentView: View {
             }
         }
         .task { await viewModel.refreshDevices() }
+        // Must fit the widest sidebar (380) plus preview (420) and inspector (370); otherwise the split view overflows and is centred, clipping the sidebar.
         .frame(minWidth: 1180, minHeight: 760)
     }
 
@@ -37,7 +38,10 @@ struct ContentView: View {
                     }.tag(identity)
                 }
             }.listStyle(.sidebar)
-        }.padding().navigationSplitViewColumnWidth(min: 270, ideal: 300)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 380)
     }
 
     private var preview: some View {
@@ -81,7 +85,7 @@ struct ContentView: View {
                 Spacer()
                 statusView
             }
-        }.padding(22).frame(minWidth: 560)
+        }.padding(22).frame(minWidth: 420, maxWidth: .infinity, alignment: .leading)
     }
 
     private var statusView: some View {
