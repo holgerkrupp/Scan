@@ -67,6 +67,13 @@ final class FujitsuScanSnapDriverTests: XCTestCase {
         }
     }
 
+    func testS510ToleratesUnsupportedOptionalModePages() {
+        XCTAssertTrue(FujitsuScanSnapModelProfile.s510.toleratesModeSelectFailures)
+        XCTAssertTrue(FujitsuScanSnapModelProfile.s510.probesColorInterlace)
+        XCTAssertFalse(FujitsuScanSnapModelProfile.s1500.toleratesModeSelectFailures)
+        XCTAssertFalse(FujitsuScanSnapModelProfile.s1500.probesColorInterlace)
+    }
+
     func testScannerBufferingIsGatedByCapabilityAndDecodesFromOldProfiles() throws {
         var options = ScanOptions(acquisition: AcquisitionSettings(source: .adfDuplex, colorMode: .color, resolutionDPI: 300, scannerBuffering: true))
         XCTAssertNoThrow(try FujitsuScanSnapModelProfile.ix500.capabilities.validate(options))
