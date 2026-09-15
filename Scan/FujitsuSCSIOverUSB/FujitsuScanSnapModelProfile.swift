@@ -100,7 +100,7 @@ struct FujitsuScanSnapModelProfile: Sendable {
     )
 
     /// ScanSnap S510 / S510M: same SCSI-over-USB command flow as the S1500,
-    /// no 400 dpi step. Protocol-backed profile, not yet validated on hardware.
+    /// no 400 dpi step. Validated on S510M hardware (USB product 0x116f).
     static let s510 = FujitsuScanSnapModelProfile(
         name: "Fujitsu ScanSnap S510/S510M",
         usbDeviceIDs: [USBDeviceID(vendorID: 0x04c5, productID: 0x1155), USBDeviceID(vendorID: 0x04c5, productID: 0x116f)],
@@ -111,8 +111,13 @@ struct FujitsuScanSnapModelProfile: Sendable {
         waitsForReadyAfterFeed: true,
         emulatesMonochromeInSoftware: false,
         pixelsPerLineModulus: 1,
-        probesColorInterlace: false,
-        toleratesModeSelectFailures: false,
+        // S510-family firmware does not consistently accept the S1500's RGB
+        // dot order. Probe the Fujitsu layouts and retain the accepted one.
+        probesColorInterlace: true,
+        // The S510M rejects the optional scan-buffer mode page (0x3a) with
+        // ILLEGAL REQUEST / INVALID FIELD IN PARAMETER LIST. SANE likewise
+        // treats unsupported optional mode pages as warnings and continues.
+        toleratesModeSelectFailures: true,
         transferChunkSize: 32 * 1024,
         lookupTableInputBits: 10
     )
