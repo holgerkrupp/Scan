@@ -1,0 +1,10 @@
+// Build settings shared by all targets and configurations.
+//
+// DEVELOPMENT_TEAM is the upstream signing team. To sign with your own team,
+// copy Local.xcconfig.example to Local.xcconfig (ignored by git) and set it
+// there. Do not pick a team in Xcode's Signing & Capabilities pane: that
+// writes the team into project.pbxproj, which overrides this file.
+
+DEVELOPMENT_TEAM = 46D3VYP253
+
+#include? "Local.xcconfig"

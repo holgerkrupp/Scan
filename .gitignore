@@ -1,2 +1,8 @@
 # macOS Finder metadata
 .DS_Store
+
+# Per-user Xcode state
+xcuserdata/
+
+# Machine-specific build settings, see Config/Shared.xcconfig
+Config/Local.xcconfig
