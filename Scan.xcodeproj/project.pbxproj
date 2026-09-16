@@ -343,7 +343,7 @@
 				CODE_SIGN_ENTITLEMENTS = "";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 15;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -360,7 +360,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2026.3;
+				MARKETING_VERSION = 2026.4;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"/opt/homebrew/opt/libusb/lib/libusb-1.0.a",
@@ -386,7 +386,7 @@
 				CODE_SIGN_ENTITLEMENTS = Scan/Scan.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 5;
+				CURRENT_PROJECT_VERSION = 15;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
@@ -403,7 +403,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2026.3;
+				MARKETING_VERSION = 2026.4;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"/opt/homebrew/opt/libusb/lib/libusb-1.0.a",

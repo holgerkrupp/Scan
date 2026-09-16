@@ -20,9 +20,9 @@ The size presets are deliberately explicit:
 
 Acquisition DPI is sent to the scanner. Output DPI/downsampling and compression happen in the reusable output pipeline. Capabilities are validated before acquisition and unsupported controls are disabled with an explanation in the inspector.
 
-## Native legacy Fujitsu SCSI-over-USB backend (ScanSnap fi-5110EOX, S500, S510, S1500, iX500; fi-5000, fi-6000)
+## Native Fujitsu SCSI-over-USB backend (ScanSnap fi-5110EOX, S500, S510, S1500, iX500, iX1500; fi-5000, fi-6000)
 
-`FujitsuScanSnapDevice` and its private SCSI-over-USB command engine are shared by the Fujitsu SCSI-over-USB family. Each model contributes a `FujitsuScanSnapModelProfile` (USB IDs, capabilities, and explicit quirk flags); `FujitsuScanSnapS1500Driver` serves the fi-5110EOX family, S500/S500M, S510/S510M and S1500/S1500M profiles by USB product ID, `FujitsuScanSnapIX500Driver` the iX500, and `FujitsuFiSeriesDriver` the fi-5000 and fi-6000 document scanners. The shared command flow remains the hardware path: inquiry, ADF setup, automatic document length, window setup, interleaved duplex reads, sense/status handling, and paper recovery.
+`FujitsuScanSnapDevice` and its private SCSI-over-USB command engine are shared by the Fujitsu SCSI-over-USB family. Each model contributes a `FujitsuScanSnapModelProfile` (USB IDs, capabilities, and explicit quirk flags); `FujitsuScanSnapS1500Driver` serves the fi-5110EOX family, S500/S500M, S510/S510M and S1500/S1500M profiles by USB product ID, dedicated thin drivers select the iX500 and iX1500 profiles, and `FujitsuFiSeriesDriver` serves the fi-5000 and fi-6000 document scanners. The shared command flow remains the hardware path: inquiry, ADF setup, automatic document length, window setup, interleaved duplex reads, sense/status handling, and paper recovery.
 
 | Driver | USB IDs | Profile |
 | --- | --- | --- |
@@ -31,11 +31,12 @@ Acquisition DPI is sent to the scanner. Output DPI/downsampling and compression 
 | `FujitsuScanSnapS1500Driver` | `0x04c5/0x1155`, `0x04c5/0x116f` | `.s510` (validated on S510M hardware; S1500 flow without 400 dpi, tolerant optional mode pages, probed color interlace) |
 | `FujitsuScanSnapS1500Driver` | `0x04c5/0x11a2` | `.s1500` (validated reference path) |
 | `FujitsuScanSnapIX500Driver` | `0x04c5/0x132b` | `.ix500` (validated on hardware) |
+| `FujitsuScanSnapIX1500Driver` | `0x04c5/0x159f` | `.ix1500` (generic Fujitsu flow, software monochrome conversion; not validated on hardware) |
 | `FujitsuFiSeriesDriver` | `0x04c5/0x1097`, `0x04c5/0x10e0`, `0x04c5/0x10e1` | `.fi5000` (protocol-backed, fi-5110C and fi-5x20C; not validated on hardware) |
 | `FujitsuFiSeriesDriver` | `0x04c5/0x10e2`, `0x04c5/0x114a` | `.fi5530C` (protocol-backed, fi-5530C/C2, 256-entry gamma table; not validated on hardware) |
 | `FujitsuFiSeriesDriver` | `0x04c5/0x11fc`, `0x04c5/0x114f`, `0x04c5/0x11f3`, `0x04c5/0x114d`, `0x04c5/0x11f1`, `0x04c5/0x1150`, `0x04c5/0x11f4`, `0x04c5/0x114e`, `0x04c5/0x11f2` | `.fi6000` (protocol-backed, fi-6110/6130/6130Z/6140/6140Z/6230/6230Z/6240/6240Z; not validated on hardware) |
 
-No other Fujitsu product ID is claimed by these drivers. In particular the iX100 (still supported by ScanSnap Home on macOS 26) and the fi-7000/fi-8000 generations (covered by Ricoh's fi Series macOS driver) are left alone, as are the ZLA variants that SANE lists as untested.
+No other Fujitsu product ID is claimed by these drivers. In particular the iX100 and the fi-7000/fi-8000 generations are left alone, as are the ZLA variants that SANE lists as untested.
 
 The fi-5110EOX, fi-5000 and fi-6000 profiles are built by `FujitsuScanSnapModelProfile.protocolBacked` from the S1500 flow and the model notes in SANE's `fujitsu.c`, where none of them needs the iX500-style pre-read, quantisation table or hopper check:
 
@@ -45,7 +46,9 @@ The fi-5110EOX, fi-5000 and fi-6000 profiles are built by `FujitsuScanSnapModelP
 - Only the ADF is advertised. The flatbed of the fi-5220C, fi-6230 and fi-6240 is never selected.
 - The fi-5110EOX quirk `cropping_mode = CROP_ABSOLUTE` concerns the placement of a cropped window; the engine always requests the full sheet from the origin, so it is not modelled.
 
-`FujitsuCommandTranscriptTests` requires one model of each of these profiles (except the fi-5530C, whose gamma payload differs) to reproduce the S1500 colour and gray fixtures byte for byte, and checks that a rejected gamma table is tolerated by them but still aborts an S1500 scan.
+The iX1500 profile also uses this generic flow because SANE's `fujitsu` backend has no model-specific `init_model()` overrides for it. USB product `0x159f` is routed to a dedicated thin driver, monochrome output is derived from the scanner's colour samples, and the iX500-only pre-read, quantisation-table, hopper, buffering, and hardware-JPEG behavior stays disabled. The profile remains protocol-backed until it is exercised on hardware.
+
+`FujitsuCommandTranscriptTests` requires one model of each of the older protocol-backed profiles (except the fi-5530C, whose gamma payload differs) to reproduce the S1500 colour and gray fixtures byte for byte, and checks that a rejected gamma table is tolerated by them but still aborts an S1500 scan.
 
 The iX500 profile follows the quirks documented in SANE's `fujitsu.c` `init_model()`:
 

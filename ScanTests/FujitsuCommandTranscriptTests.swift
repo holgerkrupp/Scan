@@ -134,6 +134,25 @@ final class FujitsuCommandTranscriptTests: XCTestCase {
         }
     }
 
+    func testIX1500UsesGenericColorFlowForColorAndSoftwareGray() async throws {
+        let driver = await FujitsuScanSnapIX1500Driver()
+        let identity = Self.identity(productID: 0x159f)
+        let color = Scenario("ix1500-color", source: .adfDuplex, mode: .color, dpi: 300, sheets: 1, autoCrop: true)
+        let gray = Scenario("ix1500-gray", source: .adfDuplex, mode: .gray, dpi: 300, sheets: 1, autoCrop: true)
+
+        let colorTranscript = try await Self.transcript(driver: driver, scenario: color, identity: identity)
+        let grayTranscript = try await Self.transcript(driver: driver, scenario: gray, identity: identity)
+
+        // Gray conversion happens after acquisition, so the scanner receives
+        // the same color command sequence for both requests.
+        XCTAssertEqual(grayTranscript, colorTranscript)
+
+        let wrapperPrefix = "W 43" + String(repeating: "00", count: 0x12)
+        XCTAssertFalse(colorTranscript.contains { $0.hasPrefix(wrapperPrefix + "1d") }, "iX500 diagnostic pre-read must stay disabled")
+        XCTAssertFalse(colorTranscript.contains { $0.hasPrefix(wrapperPrefix + "2a0088") }, "iX500 JPEG table must stay disabled")
+        XCTAssertFalse(colorTranscript.contains { $0.hasPrefix(wrapperPrefix + "c2") }, "iX500 hopper check must stay disabled")
+    }
+
     func testProtocolBackedModelsReproduceTheS1500ColorAndGraySequences() async throws {
         for model in Self.s1500CompatibleModels {
             for scenario in Self.s1500Scenarios where scenario.options.colorMode != .lineart {

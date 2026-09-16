@@ -192,6 +192,18 @@ struct FujitsuScanSnapModelProfile: Sendable {
         lookupTableInputBits: 8
     )
 
+    /// Fujitsu ScanSnap iX1500 (USB 0x04c5/0x159f). SANE's `fujitsu`
+    /// backend drives this model with the generic Fujitsu command flow and no
+    /// `init_model()` overrides. The scanner produces colour data; grayscale
+    /// and line-art are derived in software. Not yet validated on hardware.
+    static let ix1500 = protocolBacked(
+        name: "Fujitsu ScanSnap iX1500",
+        productIDs: [0x159f],
+        resolutionsDPI: [150, 200, 300, 600],
+        lookupTableInputBits: 10,
+        emulatesMonochromeInSoftware: true
+    )
+
     // MARK: - Protocol-backed models without current macOS support
 
     /// ScanSnap fi-5110EOX, fi-5110EOX2, fi-5110EOX3 and fi-5110EOXM, the
@@ -247,7 +259,8 @@ struct FujitsuScanSnapModelProfile: Sendable {
         name: String,
         productIDs: [UInt16],
         resolutionsDPI: [Int],
-        lookupTableInputBits: Int
+        lookupTableInputBits: Int,
+        emulatesMonochromeInSoftware: Bool = false
     ) -> FujitsuScanSnapModelProfile {
         FujitsuScanSnapModelProfile(
             name: name,
@@ -257,7 +270,7 @@ struct FujitsuScanSnapModelProfile: Sendable {
             sendsJPEGQuantizationTable: false,
             checksHopperBeforeFirstFeed: false,
             waitsForReadyAfterFeed: true,
-            emulatesMonochromeInSoftware: false,
+            emulatesMonochromeInSoftware: emulatesMonochromeInSoftware,
             pixelsPerLineModulus: 1,
             lineartPixelsPerLineModulus: 8,
             probesColorInterlace: true,

@@ -6,6 +6,10 @@ final class FujitsuScanSnapDriverTests: XCTestCase {
         name: "ScanSnap iX500", manufacturer: "Fujitsu", model: "iX500", serialNumber: "X1",
         connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x132b), locationID: 3
     )
+    private let ix1500Identity = ScannerIdentity(
+        name: "ScanSnap iX1500", manufacturer: "Fujitsu", model: "iX1500", serialNumber: "X15",
+        connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x159f), locationID: 4
+    )
     private let s1500Identity = ScannerIdentity(
         name: "ScanSnap S1500", manufacturer: "Fujitsu", model: "S1500", serialNumber: "S1",
         connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x11a2), locationID: 7
@@ -21,6 +25,26 @@ final class FujitsuScanSnapDriverTests: XCTestCase {
         XCTAssertEqual(capabilities?.supportsDuplex, true)
         XCTAssertEqual(capabilities?.colorModes, [.color, .gray, .lineart])
         XCTAssertEqual(capabilities?.resolutionsDPI, [150, 200, 300, 600])
+    }
+
+    func testRegistryRoutesIX1500ToItsNativeDriver() {
+        let driver = ScannerDriverRegistry.live.driver(for: ix1500Identity)
+        XCTAssertTrue(driver is FujitsuScanSnapIX1500Driver)
+        XCTAssertFalse(FujitsuScanSnapIX500Driver().canDrive(ix1500Identity))
+        XCTAssertFalse(FujitsuScanSnapS1500Driver().canDrive(ix1500Identity))
+
+        let profile = FujitsuScanSnapModelProfile.ix1500
+        XCTAssertEqual(ScannerDriverRegistry.live.capabilities(for: ix1500Identity), profile.capabilities)
+        XCTAssertEqual(profile.capabilities.sources, [.adfFront, .adfBack, .adfDuplex])
+        XCTAssertEqual(profile.capabilities.colorModes, [.color, .gray, .lineart])
+        XCTAssertEqual(profile.capabilities.resolutionsDPI, [150, 200, 300, 600])
+        XCTAssertTrue(profile.emulatesMonochromeInSoftware)
+        XCTAssertFalse(profile.sendsDiagnosticPreread)
+        XCTAssertFalse(profile.sendsJPEGQuantizationTable)
+        XCTAssertFalse(profile.checksHopperBeforeFirstFeed)
+        XCTAssertTrue(profile.waitsForReadyAfterFeed)
+        XCTAssertFalse(profile.capabilities.supportsScannerBuffering)
+        XCTAssertFalse(profile.capabilities.supportsHardwareCompression)
     }
 
     func testS1500DriverStillClaimsOnlyItsValidatedID() {
@@ -63,7 +87,7 @@ final class FujitsuScanSnapDriverTests: XCTestCase {
     }
 
     func testNativeDriversClaimDisjointIDsAndLeaveVendorSupportedModelsAlone() {
-        let drivers: [ScannerDriver] = [FujitsuScanSnapS300Driver(), FujitsuScanSnapS1500Driver(), FujitsuScanSnapIX500Driver(), FujitsuFiSeriesDriver()]
+        let drivers: [ScannerDriver] = [FujitsuScanSnapS300Driver(), FujitsuScanSnapS1500Driver(), FujitsuScanSnapIX500Driver(), FujitsuScanSnapIX1500Driver(), FujitsuFiSeriesDriver()]
         var claimed = Set<USBDeviceID>()
         for driver in drivers {
             XCTAssertTrue(claimed.isDisjoint(with: driver.supportedUSBDeviceIDs), driver.name)
@@ -110,6 +134,20 @@ final class FujitsuScanSnapDriverTests: XCTestCase {
         XCTAssertEqual(plan.imageSize.width, 1274)
         XCTAssertEqual(plan.widthScannerUnits, 1274 * 1200 / 150)
         XCTAssertEqual(plan.bytesPerLine(forWidth: 1274), 1274 * 3)
+        XCTAssertTrue(plan.traceDescription.contains("gray (scanned as color)"))
+    }
+
+    func testIX1500PlanDerivesMonochromeFromColorUsingGenericGeometry() {
+        let options = ScanOptions(acquisition: AcquisitionSettings(source: .adfDuplex, colorMode: .gray, resolutionDPI: 150))
+        let plan = FujitsuScanPlan(options: options, profile: .ix1500)
+
+        XCTAssertEqual(plan.colorMode, .gray)
+        XCTAssertEqual(plan.scannerColorMode, .color)
+        XCTAssertEqual(plan.composition, 5)
+        XCTAssertEqual(plan.bitsPerPixel, 8)
+        XCTAssertEqual(plan.imageSize.width, 1275)
+        XCTAssertEqual(plan.widthScannerUnits, 10_200)
+        XCTAssertEqual(plan.bytesPerLine(forWidth: 1275), 1275 * 3)
         XCTAssertTrue(plan.traceDescription.contains("gray (scanned as color)"))
     }
 
