@@ -1,11 +1,12 @@
 import Foundation
 
 /// Native driver for the ScanSnap models that share the S1500's Fujitsu
-/// SCSI-over-USB command flow: S500/S500M, S510/S510M, and S1500/S1500M.
-/// The profile is chosen by USB product ID; only the S1500 profile has been
-/// validated on hardware, the S500/S510 profiles are protocol-backed.
+/// SCSI-over-USB command flow: fi-5110EOX/EOX2/EOX3/EOXM, S500/S500M,
+/// S510/S510M, and S1500/S1500M. The profile is chosen by USB product ID; only
+/// the S1500 profile has been validated on hardware, the others are
+/// protocol-backed.
 struct FujitsuScanSnapS1500Driver: ScannerDriver {
-    static let profiles: [FujitsuScanSnapModelProfile] = [.s500, .s510, .s1500]
+    static let profiles: [FujitsuScanSnapModelProfile] = [.fi5110EOX, .s500, .s510, .s1500]
 
     let name = "Fujitsu ScanSnap legacy SCSI-over-USB"
     var supportedUSBDeviceIDs: Set<USBDeviceID> { Set(Self.profiles.flatMap(\.usbDeviceIDs)) }

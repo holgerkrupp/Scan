@@ -34,6 +34,70 @@ final class FujitsuScanSnapDriverTests: XCTestCase {
         XCTAssertNil(ScannerDriverRegistry.live.driver(for: unknownFujitsu))
     }
 
+    func testRegistryRoutesModelsWithoutMacOSSupportToProtocolBackedProfiles() {
+        let expectations: [(productID: UInt16, profile: FujitsuScanSnapModelProfile)] = [
+            (0x1096, .fi5110EOX), (0x10e6, .fi5110EOX), (0x10f2, .fi5110EOX),
+            (0x1097, .fi5000), (0x10e0, .fi5000), (0x10e1, .fi5000),
+            (0x10e2, .fi5530C), (0x114a, .fi5530C),
+            (0x11fc, .fi6000), (0x114f, .fi6000), (0x11f3, .fi6000), (0x114d, .fi6000), (0x11f1, .fi6000),
+            (0x1150, .fi6000), (0x11f4, .fi6000), (0x114e, .fi6000), (0x11f2, .fi6000)
+        ]
+        for (productID, expected) in expectations {
+            let identity = usbIdentity(productID)
+            let label = String(format: "0x%04x", productID)
+            let profile: FujitsuScanSnapModelProfile?
+            switch ScannerDriverRegistry.live.driver(for: identity) {
+            case is FujitsuScanSnapS1500Driver: profile = FujitsuScanSnapS1500Driver.profile(for: identity)
+            case is FujitsuFiSeriesDriver: profile = FujitsuFiSeriesDriver.profile(for: identity)
+            default: profile = nil
+            }
+            XCTAssertEqual(profile?.name, expected.name, label)
+            XCTAssertEqual(ScannerDriverRegistry.live.capabilities(for: identity), expected.capabilities, label)
+            // Flatbed units are driven through their ADF only.
+            XCTAssertEqual(expected.capabilities.sources, [.adfFront, .adfBack, .adfDuplex], label)
+            XCTAssertTrue(expected.toleratesGammaTableFailure, label)
+            XCTAssertTrue(expected.probesColorInterlace, label)
+        }
+        XCTAssertTrue(ScannerDriverRegistry.live.driver(for: usbIdentity(0x10f2)) is FujitsuScanSnapS1500Driver)
+        XCTAssertTrue(ScannerDriverRegistry.live.driver(for: usbIdentity(0x114f)) is FujitsuFiSeriesDriver)
+    }
+
+    func testNativeDriversClaimDisjointIDsAndLeaveVendorSupportedModelsAlone() {
+        let drivers: [ScannerDriver] = [FujitsuScanSnapS300Driver(), FujitsuScanSnapS1500Driver(), FujitsuScanSnapIX500Driver(), FujitsuFiSeriesDriver()]
+        var claimed = Set<USBDeviceID>()
+        for driver in drivers {
+            XCTAssertTrue(claimed.isDisjoint(with: driver.supportedUSBDeviceIDs), driver.name)
+            claimed.formUnion(driver.supportedUSBDeviceIDs)
+        }
+        // Still supported by Ricoh on current macOS (ScanSnap Home, fi Series macOS driver).
+        for productID: UInt16 in [0x13f4 /* iX100 */, 0x132e /* fi-7160 */, 0x14df /* fi-7140 */, 0x151f /* fi-7030 */] {
+            XCTAssertNil(ScannerDriverRegistry.live.driver(for: usbIdentity(productID)), String(format: "0x%04x", productID))
+        }
+    }
+
+    func testProtocolBackedPlansRoundLineartToWholeBytesOnly() {
+        for profile in [FujitsuScanSnapModelProfile.fi5110EOX, .fi5000, .fi5530C, .fi6000] {
+            let lineart = FujitsuScanPlan(options: ScanOptions(acquisition: AcquisitionSettings(source: .adfFront, colorMode: .lineart, resolutionDPI: 150)), profile: profile)
+            // 8.5 in * 150 dpi = 1275 px, rounded down to SANE's default ppl_mod_by_mode[LINEART] = 8.
+            XCTAssertEqual(lineart.imageSize.width, 1272, profile.name)
+            XCTAssertEqual(lineart.widthScannerUnits, 1272 * 1200 / 150, profile.name)
+            XCTAssertEqual(lineart.scannerColorMode, .lineart, profile.name)
+
+            let gray = FujitsuScanPlan(options: ScanOptions(acquisition: AcquisitionSettings(source: .adfFront, colorMode: .gray, resolutionDPI: 150)), profile: profile)
+            XCTAssertEqual(gray.imageSize.width, 1275, profile.name)
+            XCTAssertEqual(gray.scannerColorMode, .gray, profile.name)
+        }
+        XCTAssertEqual(FujitsuGammaTable.payload(inputBits: FujitsuScanSnapModelProfile.fi5530C.lookupTableInputBits).count, 10 + 256)
+        XCTAssertEqual(FujitsuGammaTable.payload(inputBits: FujitsuScanSnapModelProfile.fi6000.lookupTableInputBits).count, 10 + 1024)
+    }
+
+    private func usbIdentity(_ productID: UInt16) -> ScannerIdentity {
+        ScannerIdentity(
+            name: "Fujitsu", manufacturer: "Fujitsu", model: "?", serialNumber: nil,
+            connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: productID), locationID: nil
+        )
+    }
+
     func testIX500PlanScansColorAndRoundsWidthToEvenPixels() {
         let options = ScanOptions(acquisition: AcquisitionSettings(source: .adfDuplex, colorMode: .gray, resolutionDPI: 150))
         let plan = FujitsuScanPlan(options: options, profile: .ix500)

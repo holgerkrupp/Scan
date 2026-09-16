@@ -105,6 +105,9 @@ final class ScanCoreTests: XCTestCase {
     func testLegacyScanSnapUSBModelsAreClaimedByTheNativeDrivers() {
         let legacyDriver = FujitsuScanSnapS1500Driver()
         let expected: Set<USBDeviceID> = [
+            USBDeviceID(vendorID: 0x04c5, productID: 0x1096),
+            USBDeviceID(vendorID: 0x04c5, productID: 0x10e6),
+            USBDeviceID(vendorID: 0x04c5, productID: 0x10f2),
             USBDeviceID(vendorID: 0x04c5, productID: 0x10fe),
             USBDeviceID(vendorID: 0x04c5, productID: 0x1135),
             USBDeviceID(vendorID: 0x04c5, productID: 0x1155),

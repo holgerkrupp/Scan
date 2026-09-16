@@ -46,14 +46,36 @@ final class FujitsuCommandTranscriptTests: XCTestCase {
         Scenario("ix500-empty-feeder", source: .adfFront, mode: .color, dpi: 300, sheets: 0, expectsFeederEmpty: true)
     ]
 
-    static let identity = ScannerIdentity(
-        name: "Scripted ScanSnap", manufacturer: "Fujitsu", model: "Scripted", serialNumber: "SCRIPT",
-        connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x11a2), locationID: 1
-    )
+    static let identity = identity(productID: 0x11a2)
+
+    static func identity(productID: UInt16) -> ScannerIdentity {
+        ScannerIdentity(
+            name: "Scripted ScanSnap", manufacturer: "Fujitsu", model: String(format: "0x%04x", productID), serialNumber: "SCRIPT",
+            connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: productID), locationID: 1
+        )
+    }
+
+    /// Protocol-backed models whose colour and gray flow is the S1500's: RGB is
+    /// accepted on the first interlace probe and every best-effort step
+    /// succeeds, so they must reproduce the S1500 fixtures byte for byte. The
+    /// fi-5530C is left out because it sends the 256-entry gamma table.
+    static let s1500CompatibleModels: [(driver: ScannerDriver, productID: UInt16)] = [
+        (FujitsuScanSnapS1500Driver(), 0x10f2), // ScanSnap fi-5110EOXM
+        (FujitsuFiSeriesDriver(), 0x10e0),      // fi-5x20C
+        (FujitsuFiSeriesDriver(), 0x114f),      // fi-6130
+        (FujitsuFiSeriesDriver(), 0x11f2)       // fi-6240Z
+    ]
 
     /// Runs one scenario through `driver` and returns the transport transcript.
-    static func transcript(driver: ScannerDriver, scenario: Scenario) async throws -> [String] {
-        let transport = FujitsuScriptedTransport(identity: identity, pixelWidth: scenario.pixelWidth, pixelHeight: 8, sheets: scenario.sheets)
+    static func transcript(
+        driver: ScannerDriver,
+        scenario: Scenario,
+        identity: ScannerIdentity = FujitsuCommandTranscriptTests.identity,
+        rejectsGammaTable: Bool = false
+    ) async throws -> [String] {
+        let transport = FujitsuScriptedTransport(
+            identity: identity, pixelWidth: scenario.pixelWidth, pixelHeight: 8, sheets: scenario.sheets, rejectsGammaTable: rejectsGammaTable
+        )
         let device = driver.makeDevice(identity: identity, transport: transport)
         try await device.open()
         var pages = 0
@@ -78,12 +100,12 @@ final class FujitsuCommandTranscriptTests: XCTestCase {
         Bundle(for: FujitsuCommandTranscriptTests.self).url(forResource: name, withExtension: "transcript")
     }
 
-    private func assertMatchesFixture(driver: ScannerDriver, scenario: Scenario) async throws {
+    private func assertMatchesFixture(driver: ScannerDriver, scenario: Scenario, identity: ScannerIdentity = FujitsuCommandTranscriptTests.identity) async throws {
         guard let url = Self.fixtureURL(scenario.name) else {
             return XCTFail("Missing fixture \(scenario.name).transcript in the test bundle")
         }
         let expected = try String(contentsOf: url, encoding: .utf8).split(separator: "\n").map(String.init)
-        let actual = try await Self.transcript(driver: driver, scenario: scenario)
+        let actual = try await Self.transcript(driver: driver, scenario: scenario, identity: identity)
 
         if actual != expected {
             let firstDifference = zip(actual, expected).enumerated().first { $0.element.0 != $0.element.1 }?.offset ?? min(actual.count, expected.count)
@@ -91,7 +113,7 @@ final class FujitsuCommandTranscriptTests: XCTestCase {
                 lines[max(0, firstDifference - 2)..<min(lines.count, firstDifference + 2)].map { String($0.prefix(120)) }.joined(separator: "\n    ")
             }
             XCTFail("""
-            \(scenario.name): command transcript differs at entry \(firstDifference) (actual \(actual.count) entries, fixture \(expected.count)).
+            \(scenario.name) (\(identity.model)): command transcript differs at entry \(firstDifference) (actual \(actual.count) entries, fixture \(expected.count)).
               actual:
                 \(context(actual))
               fixture:
@@ -110,5 +132,41 @@ final class FujitsuCommandTranscriptTests: XCTestCase {
         for scenario in Self.ix500Scenarios {
             try await assertMatchesFixture(driver: FujitsuScanSnapIX500Driver(), scenario: scenario)
         }
+    }
+
+    func testProtocolBackedModelsReproduceTheS1500ColorAndGraySequences() async throws {
+        for model in Self.s1500CompatibleModels {
+            for scenario in Self.s1500Scenarios where scenario.options.colorMode != .lineart {
+                try await assertMatchesFixture(driver: model.driver, scenario: scenario, identity: Self.identity(productID: model.productID))
+            }
+        }
+    }
+
+    func testProtocolBackedModelsContinueWhenTheGammaTableIsRejected() async throws {
+        let scenario = Scenario("fi6130-gamma-rejected", source: .adfDuplex, mode: .color, dpi: 300, sheets: 1)
+        // transcript() asserts that both sides of the sheet are delivered.
+        let transcript = try await Self.transcript(
+            driver: FujitsuFiSeriesDriver(), scenario: scenario, identity: Self.identity(productID: 0x114f), rejectsGammaTable: true
+        )
+        let wrapperPrefix = "W 43" + String(repeating: "00", count: 0x12)
+        let gammaIndex = try XCTUnwrap(transcript.firstIndex { $0.hasPrefix(wrapperPrefix + "2a0083") })
+        // Table payload, failed status, then REQUEST SENSE before the scan continues.
+        XCTAssertEqual(transcript[gammaIndex + 2], "R 13")
+        XCTAssertTrue(transcript[gammaIndex + 3].hasPrefix(wrapperPrefix + "03"))
+    }
+
+    func testValidatedS1500StillAbortsWhenTheGammaTableIsRejected() async throws {
+        let scenario = Scenario("s1500-gamma-rejected", source: .adfFront, mode: .color, dpi: 300, sheets: 1)
+        let transport = FujitsuScriptedTransport(identity: Self.identity, pixelWidth: scenario.pixelWidth, pixelHeight: 8, sheets: 1, rejectsGammaTable: true)
+        let device = FujitsuScanSnapS1500Driver().makeDevice(identity: Self.identity, transport: transport)
+        try await device.open()
+        do {
+            let stream = try await device.startScan(options: scenario.options)
+            for try await _ in stream {}
+            XCTFail("The S1500 must not scan with a rejected gamma table")
+        } catch {
+            XCTAssertNotEqual(error as? ScannerError, .feederEmpty)
+        }
+        await device.close()
     }
 }

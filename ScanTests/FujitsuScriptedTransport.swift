@@ -26,12 +26,16 @@ final class FujitsuScriptedTransport: USBDeviceTransport, @unchecked Sendable {
     private var pendingStatus: UInt8 = 0
     private var pendingSense: (key: UInt8, asc: UInt8, ascq: UInt8)?
     private var imageRemaining: [Bool: Int] = [false: 0, true: 0]
+    /// Answer `SEND` of the gamma table (data type 0x83) with ILLEGAL REQUEST,
+    /// like a scanner whose A/D width does not match the table size.
+    private let rejectsGammaTable: Bool
 
-    init(identity: ScannerIdentity, pixelWidth: Int, pixelHeight: Int, sheets: Int) {
+    init(identity: ScannerIdentity, pixelWidth: Int, pixelHeight: Int, sheets: Int, rejectsGammaTable: Bool = false) {
         self.identity = identity
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
         self.sheetsRemaining = sheets
+        self.rejectsGammaTable = rejectsGammaTable
     }
 
     func open() async throws {
@@ -111,6 +115,10 @@ final class FujitsuScriptedTransport: USBDeviceTransport, @unchecked Sendable {
             awaitingPayloadBytes = Self.int(cdb, 6, 3)
         case 0x2a: // SEND
             awaitingPayloadBytes = Self.int(cdb, 6, 3)
+            if cdb[2] == 0x83, rejectsGammaTable {
+                pendingStatus = 2
+                pendingSense = (0x05, 0x26, 0x00)
+            }
         case 0x1d: // SEND DIAGNOSTIC
             awaitingPayloadBytes = Self.int(cdb, 3, 2)
         case 0x1b: // SCAN

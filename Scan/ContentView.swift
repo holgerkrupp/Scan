@@ -21,7 +21,7 @@ struct ContentView: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack { Label("Scanners", systemImage: "scanner").font(.headline); Spacer(); Button { Task { await viewModel.refreshDevices() } } label: { Image(systemName: "arrow.clockwise") }.disabled(viewModel.isRefreshing) }
-            Text("Legacy ScanSnap USB (S300 experimental) plus Image Capture").font(.caption).foregroundStyle(.secondary)
+            Text("Legacy ScanSnap and fi-series USB (S300 experimental) plus Image Capture").font(.caption).foregroundStyle(.secondary)
             List(selection: Binding(get: { viewModel.selectedIdentity }, set: { viewModel.selectedIdentity = $0 })) {
                 ForEach(viewModel.discoveredIdentities) { identity in
                     let capabilities = viewModel.capabilities(for: identity)

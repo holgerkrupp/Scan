@@ -75,6 +75,7 @@ final class ScannerDriverRegistry {
             FujitsuScanSnapS300Driver(),
             FujitsuScanSnapS1500Driver(),
             FujitsuScanSnapIX500Driver(),
+            FujitsuFiSeriesDriver(),
             ImageCaptureScannerDriver()
         ]
     )

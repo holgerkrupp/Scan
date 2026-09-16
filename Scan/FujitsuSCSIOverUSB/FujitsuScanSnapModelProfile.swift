@@ -33,9 +33,14 @@ struct FujitsuScanSnapModelProfile: Sendable {
     /// derived in software from the colour samples.
     let emulatesMonochromeInSoftware: Bool
 
-    /// The number of pixels per line is rounded down to a multiple of this value
-    /// before the window is sent.
+    /// The number of pixels per line in colour and grayscale windows is rounded
+    /// down to a multiple of this value before the window is sent.
     let pixelsPerLineModulus: Int
+
+    /// The same rounding for native line-art windows. SANE's default
+    /// `ppl_mod_by_mode[LINEART]` is 8 (whole bytes per line); the S1500 was
+    /// validated with unrounded line-art widths.
+    let lineartPixelsPerLineModulus: Int
 
     /// Probe RGB dot, BGR dot and RRGGBB line interlacing with `SET WINDOW`
     /// until the scanner accepts one, and de-interlace accordingly. Models that
@@ -46,6 +51,12 @@ struct FujitsuScanSnapModelProfile: Sendable {
     /// instead of aborting the scan.
     let toleratesModeSelectFailures: Bool
 
+    /// Log and continue when the scanner rejects the downloadable gamma table;
+    /// it then applies its built-in curve. SANE sizes the table from the A/D
+    /// width in the VPD page, which the engine does not read, so profiles whose
+    /// `lookupTableInputBits` is inferred rather than validated set this.
+    let toleratesGammaTableFailure: Bool
+
     /// Upper bound for one `READ` of image data. The engine rounds it down to a
     /// whole number of scan lines. Larger values mean fewer SCSI round trips.
     let transferChunkSize: Int
@@ -53,6 +64,10 @@ struct FujitsuScanSnapModelProfile: Sendable {
     /// Input width of the downloadable gamma table (SANE `adbits`): the table
     /// has `1 << lookupTableInputBits` entries mapping onto 8-bit output.
     let lookupTableInputBits: Int
+
+    func pixelsPerLineModulus(for mode: ScanColorMode) -> Int {
+        mode == .lineart ? lineartPixelsPerLineModulus : pixelsPerLineModulus
+    }
 
     /// Fujitsu ScanSnap S1500 / S1500M. The validated reference model.
     static let s1500 = FujitsuScanSnapModelProfile(
@@ -73,8 +88,10 @@ struct FujitsuScanSnapModelProfile: Sendable {
         waitsForReadyAfterFeed: true,
         emulatesMonochromeInSoftware: false,
         pixelsPerLineModulus: 1,
+        lineartPixelsPerLineModulus: 1,
         probesColorInterlace: false,
         toleratesModeSelectFailures: false,
+        toleratesGammaTableFailure: false,
         // The S1500's USB image endpoint terminates data phases after 32 KiB.
         transferChunkSize: 32 * 1024,
         // 1024-entry table (10-bit A/D), the validated S1500 payload.
@@ -93,8 +110,10 @@ struct FujitsuScanSnapModelProfile: Sendable {
         waitsForReadyAfterFeed: true,
         emulatesMonochromeInSoftware: false,
         pixelsPerLineModulus: 1,
+        lineartPixelsPerLineModulus: 1,
         probesColorInterlace: false,
         toleratesModeSelectFailures: false,
+        toleratesGammaTableFailure: false,
         transferChunkSize: 32 * 1024,
         lookupTableInputBits: 10
     )
@@ -111,6 +130,7 @@ struct FujitsuScanSnapModelProfile: Sendable {
         waitsForReadyAfterFeed: true,
         emulatesMonochromeInSoftware: false,
         pixelsPerLineModulus: 1,
+        lineartPixelsPerLineModulus: 1,
         // S510-family firmware does not consistently accept the S1500's RGB
         // dot order. Probe the Fujitsu layouts and retain the accepted one.
         probesColorInterlace: true,
@@ -118,6 +138,7 @@ struct FujitsuScanSnapModelProfile: Sendable {
         // ILLEGAL REQUEST / INVALID FIELD IN PARAMETER LIST. SANE likewise
         // treats unsupported optional mode pages as warnings and continues.
         toleratesModeSelectFailures: true,
+        toleratesGammaTableFailure: false,
         transferChunkSize: 32 * 1024,
         lookupTableInputBits: 10
     )
@@ -159,12 +180,91 @@ struct FujitsuScanSnapModelProfile: Sendable {
         waitsForReadyAfterFeed: false,
         emulatesMonochromeInSoftware: true,
         pixelsPerLineModulus: 2,
+        // Never used: the iX500 is always asked for colour.
+        lineartPixelsPerLineModulus: 2,
         probesColorInterlace: true,
         toleratesModeSelectFailures: true,
+        toleratesGammaTableFailure: false,
         // Validated on hardware: 256 KiB reads cut the per-sheet command count
         // from ~1,800 to ~210 for a duplex A4 sheet at 300 dpi.
         transferChunkSize: 256 * 1024,
         // SANE forces adbits = 8 for the iX500 ("lies"), i.e. a 256-entry table.
         lookupTableInputBits: 8
     )
+
+    // MARK: - Protocol-backed models without current macOS support
+
+    /// ScanSnap fi-5110EOX, fi-5110EOX2, fi-5110EOX3 and fi-5110EOXM, the
+    /// ScanSnap generation before the S500. SANE drives them with the generic
+    /// flow plus `cropping_mode = CROP_ABSOLUTE`, which concerns the placement
+    /// of a cropped window. The engine always requests the full sheet from the
+    /// origin, so that quirk is not modelled; revisit it if hardware shows an
+    /// offset image. Not yet validated on hardware.
+    static let fi5110EOX = protocolBacked(
+        name: "Fujitsu ScanSnap fi-5110EOX/EOX2/EOX3/EOXM",
+        productIDs: [0x1096, 0x10e6, 0x10f2],
+        resolutionsDPI: [150, 200, 300, 600],
+        lookupTableInputBits: 10
+    )
+
+    /// fi-5110C, fi-5120C and fi-5220C. SANE has no model quirks for them that
+    /// affect this flow. ADF only: the engine never selects the fi-5220C
+    /// flatbed. Not yet validated on hardware.
+    static let fi5000 = protocolBacked(
+        name: "Fujitsu fi-5110C/fi-5120C/fi-5220C",
+        productIDs: [0x1097, 0x10e0, 0x10e1],
+        resolutionsDPI: [150, 200, 300, 400, 600],
+        lookupTableInputBits: 10
+    )
+
+    /// fi-5530C and fi-5530C2. SANE forces `adbits = 8` for the USB fi-5530,
+    /// i.e. a 256-entry gamma table. Not yet validated on hardware.
+    static let fi5530C = protocolBacked(
+        name: "Fujitsu fi-5530C/fi-5530C2",
+        productIDs: [0x10e2, 0x114a],
+        resolutionsDPI: [150, 200, 300, 400, 600],
+        lookupTableInputBits: 8
+    )
+
+    /// fi-6110, fi-6130/fi-6130Z, fi-6140/fi-6140Z and the ADF of the
+    /// fi-6230/fi-6230Z and fi-6240/fi-6240Z (the flatbed is never selected).
+    /// SANE treats them like the S1500: its fi-6000 quirks only cap the page
+    /// length at high resolutions and, for the fi-6110 as for the S1500, drop
+    /// the background and pre-pick mode pages, which the engine never sends.
+    /// Not yet validated on hardware.
+    static let fi6000 = protocolBacked(
+        name: "Fujitsu fi-6000 series",
+        productIDs: [0x11fc, 0x114f, 0x11f3, 0x114d, 0x11f1, 0x1150, 0x11f4, 0x114e, 0x11f2],
+        resolutionsDPI: [150, 200, 300, 400, 600],
+        lookupTableInputBits: 10
+    )
+
+    /// Defaults for models ported from SANE's generic `fujitsu` flow that have
+    /// not been validated on hardware: the S1500 command sequence, with the
+    /// optional mode selects and the gamma table made best effort, colour
+    /// interlacing probed, and SANE's default line-art rounding.
+    private static func protocolBacked(
+        name: String,
+        productIDs: [UInt16],
+        resolutionsDPI: [Int],
+        lookupTableInputBits: Int
+    ) -> FujitsuScanSnapModelProfile {
+        FujitsuScanSnapModelProfile(
+            name: name,
+            usbDeviceIDs: Set(productIDs.map { USBDeviceID(vendorID: 0x04c5, productID: $0) }),
+            capabilities: legacyCapabilities(resolutionsDPI: resolutionsDPI),
+            sendsDiagnosticPreread: false,
+            sendsJPEGQuantizationTable: false,
+            checksHopperBeforeFirstFeed: false,
+            waitsForReadyAfterFeed: true,
+            emulatesMonochromeInSoftware: false,
+            pixelsPerLineModulus: 1,
+            lineartPixelsPerLineModulus: 8,
+            probesColorInterlace: true,
+            toleratesModeSelectFailures: true,
+            toleratesGammaTableFailure: true,
+            transferChunkSize: 32 * 1024,
+            lookupTableInputBits: lookupTableInputBits
+        )
+    }
 }

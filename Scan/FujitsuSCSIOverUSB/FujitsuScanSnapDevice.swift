@@ -205,7 +205,11 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         try await modeSelectBuffer(mode: plan.scannerBuffering ? .on : .off, tolerateFailure: profile.toleratesModeSelectFailures)
         try await setWindow(plan: plan)
         if plan.scannerColorMode != .lineart {
-            try await sendDefaultGammaLUT()
+            do {
+                try await sendDefaultGammaLUT()
+            } catch where profile.toleratesGammaTableFailure {
+                ScanTrace.post("Gamma table was rejected by scanner; using its built-in curve: \(error.localizedDescription).")
+            }
         }
         if profile.sendsJPEGQuantizationTable {
             await sendJPEGQuantizationTable()
@@ -1679,7 +1683,7 @@ struct FujitsuScanPlan: Sendable {
         // ppl_mod_by_mode) and the window width is derived from that, exactly
         // as SANE does. With a modulus of 1 this is 8.5 * 1200 = 10200 units.
         // JPEG needs whole 8x8 blocks (SANE rounds both dimensions to 8).
-        let modulus = max(1, profile.pixelsPerLineModulus, hardwareJPEG ? 8 : 1)
+        let modulus = max(1, profile.pixelsPerLineModulus(for: scannerColorMode), hardwareJPEG ? 8 : 1)
         var pixelsWide = Int(widthInches * Double(options.resolutionDPI))
         pixelsWide -= pixelsWide % modulus
         var lines = Int(heightInches * Double(options.resolutionDPI))

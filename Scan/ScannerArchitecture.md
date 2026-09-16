@@ -20,18 +20,32 @@ The size presets are deliberately explicit:
 
 Acquisition DPI is sent to the scanner. Output DPI/downsampling and compression happen in the reusable output pipeline. Capabilities are validated before acquisition and unsupported controls are disabled with an explanation in the inspector.
 
-## Native legacy ScanSnap SCSI-over-USB backend (S500, S510, S1500, iX500)
+## Native legacy Fujitsu SCSI-over-USB backend (ScanSnap fi-5110EOX, S500, S510, S1500, iX500; fi-5000, fi-6000)
 
-`FujitsuScanSnapDevice` and its private SCSI-over-USB command engine are shared by the Fujitsu SCSI-over-USB family. Each model contributes a `FujitsuScanSnapModelProfile` (USB IDs, capabilities, and explicit quirk flags); `FujitsuScanSnapS1500Driver` serves the S500/S500M, S510/S510M and S1500/S1500M profiles by USB product ID, and `FujitsuScanSnapIX500Driver` the iX500. The shared command flow remains the hardware path: inquiry, ADF setup, automatic document length, window setup, interleaved duplex reads, sense/status handling, and paper recovery.
+`FujitsuScanSnapDevice` and its private SCSI-over-USB command engine are shared by the Fujitsu SCSI-over-USB family. Each model contributes a `FujitsuScanSnapModelProfile` (USB IDs, capabilities, and explicit quirk flags); `FujitsuScanSnapS1500Driver` serves the fi-5110EOX family, S500/S500M, S510/S510M and S1500/S1500M profiles by USB product ID, `FujitsuScanSnapIX500Driver` the iX500, and `FujitsuFiSeriesDriver` the fi-5000 and fi-6000 document scanners. The shared command flow remains the hardware path: inquiry, ADF setup, automatic document length, window setup, interleaved duplex reads, sense/status handling, and paper recovery.
 
 | Driver | USB IDs | Profile |
 | --- | --- | --- |
+| `FujitsuScanSnapS1500Driver` | `0x04c5/0x1096`, `0x04c5/0x10e6`, `0x04c5/0x10f2` | `.fi5110EOX` (protocol-backed, fi-5110EOX/EOX2/EOX3/EOXM; not validated on hardware) |
 | `FujitsuScanSnapS1500Driver` | `0x04c5/0x10fe`, `0x04c5/0x1135` | `.s500` (protocol-backed, S1500 flow without 400 dpi; not validated on hardware) |
 | `FujitsuScanSnapS1500Driver` | `0x04c5/0x1155`, `0x04c5/0x116f` | `.s510` (validated on S510M hardware; S1500 flow without 400 dpi, tolerant optional mode pages, probed color interlace) |
 | `FujitsuScanSnapS1500Driver` | `0x04c5/0x11a2` | `.s1500` (validated reference path) |
 | `FujitsuScanSnapIX500Driver` | `0x04c5/0x132b` | `.ix500` (validated on hardware) |
+| `FujitsuFiSeriesDriver` | `0x04c5/0x1097`, `0x04c5/0x10e0`, `0x04c5/0x10e1` | `.fi5000` (protocol-backed, fi-5110C and fi-5x20C; not validated on hardware) |
+| `FujitsuFiSeriesDriver` | `0x04c5/0x10e2`, `0x04c5/0x114a` | `.fi5530C` (protocol-backed, fi-5530C/C2, 256-entry gamma table; not validated on hardware) |
+| `FujitsuFiSeriesDriver` | `0x04c5/0x11fc`, `0x04c5/0x114f`, `0x04c5/0x11f3`, `0x04c5/0x114d`, `0x04c5/0x11f1`, `0x04c5/0x1150`, `0x04c5/0x11f4`, `0x04c5/0x114e`, `0x04c5/0x11f2` | `.fi6000` (protocol-backed, fi-6110/6130/6130Z/6140/6140Z/6230/6230Z/6240/6240Z; not validated on hardware) |
 
-No other Fujitsu product ID is claimed by these drivers.
+No other Fujitsu product ID is claimed by these drivers. In particular the iX100 (still supported by ScanSnap Home on macOS 26) and the fi-7000/fi-8000 generations (covered by Ricoh's fi Series macOS driver) are left alone, as are the ZLA variants that SANE lists as untested.
+
+The fi-5110EOX, fi-5000 and fi-6000 profiles are built by `FujitsuScanSnapModelProfile.protocolBacked` from the S1500 flow and the model notes in SANE's `fujitsu.c`, where none of them needs the iX500-style pre-read, quantisation table or hopper check:
+
+- Colour interlacing is probed like on the iX500. RGB dot order is tried first, so a scanner that accepts it sees exactly the S1500's `SET WINDOW`.
+- Dropout and buffer mode selects are best effort, and so is the gamma table (`toleratesGammaTableFailure`): SANE sizes it from the A/D width in the VPD page, which the engine does not read, so a rejected table falls back to the scanner's built-in curve instead of aborting. The fi-5530C/C2 profile sends the 256-entry table because SANE forces `adbits = 8` for it; the others send the S1500's 1024-entry table.
+- Native line-art widths are rounded down to whole bytes (SANE's default `ppl_mod_by_mode[LINEART] = 8`, `lineartPixelsPerLineModulus`); colour and gray widths are not rounded. The S1500, S500 and S510 keep their unrounded line-art window.
+- Only the ADF is advertised. The flatbed of the fi-5220C, fi-6230 and fi-6240 is never selected.
+- The fi-5110EOX quirk `cropping_mode = CROP_ABSOLUTE` concerns the placement of a cropped window; the engine always requests the full sheet from the origin, so it is not modelled.
+
+`FujitsuCommandTranscriptTests` requires one model of each of these profiles (except the fi-5530C, whose gamma payload differs) to reproduce the S1500 colour and gray fixtures byte for byte, and checks that a rejected gamma table is tolerated by them but still aborts an S1500 scan.
 
 The iX500 profile follows the quirks documented in SANE's `fujitsu.c` `init_model()`:
 
@@ -105,4 +119,4 @@ Devices discovered without a matching driver remain visible as “Discovered, un
 2. Add only verified USB IDs to that driver’s `supportedUSBDeviceIDs`.
 3. Add the driver to `ScannerDriverRegistry.live` after its transport/protocol tests pass.
 4. Add a hardware validation matrix covering enumeration, open/close, every advertised source/color/DPI combination, simplex/duplex ordering, page dimensions, cancellation, empty feeder, jam/double-feed, disconnect, and partial-batch recovery.
-5. Keep simulated fixtures and automated tests independent of physical hardware: add transcript scenarios for the new profile to `FujitsuCommandTranscriptTests` (record them with the scripted transport once the sequence has been validated on the device). The S500 profile and the S510 product variants not covered above are protocol-backed only; physical validation of each model is still required before release claims are made. The S1300/S1300i and S1100/S1100i models are not included because their epjitsu protocol is different.
+5. Keep simulated fixtures and automated tests independent of physical hardware: add transcript scenarios for the new profile to `FujitsuCommandTranscriptTests` (record them with the scripted transport once the sequence has been validated on the device). The fi-5110EOX, S500, unvalidated S510 product variants, fi-5000 and fi-6000 profiles are protocol-backed only; physical validation of each model is still required before release claims are made. The S1300/S1300i and S1100/S1100i models are not included because their epjitsu protocol is different.

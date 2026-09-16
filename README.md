@@ -31,9 +31,22 @@ The native Fujitsu USB backends recognize the following models:
 | ScanSnap S510 / S510M | `0x1155` / `0x116f` | Validated on S510M hardware: duplex color at 300 dpi; optional buffer-page rejection and BGR interlace handled |
 | ScanSnap S1500 / S1500M | `0x11a2` | Validated on hardware |
 | ScanSnap iX500 | `0x132b` | Validated on hardware: simplex/duplex, color/gray/line-art, 150–600 dpi, multi-sheet batches with automatic length detection, scanner buffering, hardware JPEG, empty feeder |
+| ScanSnap fi-5110EOX / EOX2 / EOX3 / EOXM | `0x1096` / `0x10e6` / `0x10f2` | Protocol profile (S1500 command flow), not yet validated on hardware |
+| fi-5110C, fi-5120C / fi-5220C | `0x1097`, `0x10e0` / `0x10e1` | Protocol profile (S1500 command flow), not yet validated on hardware; fi-5220C via ADF only |
+| fi-5530C / fi-5530C2 | `0x10e2` / `0x114a` | Protocol profile (S1500 command flow), not yet validated on hardware |
+| fi-6110, fi-6130 / fi-6130Z, fi-6140 / fi-6140Z | `0x11fc`, `0x114f` / `0x11f3`, `0x114d` / `0x11f1` | Protocol profile (S1500 command flow), not yet validated on hardware |
+| fi-6230 / fi-6230Z, fi-6240 / fi-6240Z | `0x1150` / `0x11f4`, `0x114e` / `0x11f2` | Protocol profile (S1500 command flow), not yet validated on hardware; ADF only, the flatbed is not supported |
 
-These are legacy models that are not listed in Ricoh’s current macOS 26
-software matrix. The iX500 uses model-specific pre-read and JPEG-table setup,
+These are legacy models that Ricoh no longer supports on current macOS: the
+ScanSnap models are not listed in its macOS 26 software matrix (ScanSnap Home
+dropped the iX500 with macOS 15), and its fi Series macOS driver covers only
+fi-7000 and fi-8000 models. The fi-5000/fi-6000 and fi-5110EOX profiles reuse
+the S1500 command flow with the model notes from SANE's `fujitsu` backend:
+colour interlacing is probed, the optional mode selects and the gamma table are
+best effort, and native line-art widths are rounded to whole bytes. The iX100
+and the fi-7000/fi-8000 models are still supported by Ricoh and are not claimed.
+
+The iX500 uses model-specific pre-read and JPEG-table setup,
 always scans in color (gray and line-art are derived in the app), and offers
 two optional acquisition settings: scanner buffering (the iX500 reads the next
 sheet into its own memory while the previous one is transferred) and hardware
