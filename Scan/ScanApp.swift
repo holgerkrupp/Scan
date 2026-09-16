@@ -10,7 +10,12 @@ import SwiftUI
 
 @main
 struct ScanApp: App {
+    @NSApplicationDelegateAdaptor(ScanAppDelegate.self) private var appDelegate
     private let workspace = ScannerWorkspaceViewModel.shared
+
+    init() {
+        PageQuickLookController.shared.workspace = workspace
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -30,6 +35,12 @@ struct ScanApp: App {
                     .keyboardShortcut(.return, modifiers: [.command])
                     .disabled(workspace.selectedIdentity == nil)
                 }
+
+                Button("Quick Look Selected Page") {
+                    workspace.toggleQuickLook()
+                }
+                .keyboardShortcut("y", modifiers: [.command])
+                .disabled(workspace.selectedPageID == nil)
 
                 Button("Export Pages") {
                     Task { await workspace.saveExport() }

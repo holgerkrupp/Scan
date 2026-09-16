@@ -3,6 +3,11 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var viewModel = ScannerWorkspaceViewModel.shared
+    /// Thumbnail width chosen with the slider next to "Reveal in Finder".
+    @AppStorage("scan.thumbnailSize") private var thumbnailSize = 170.0
+    @State private var gridWidth = 0.0
+    @FocusState private var pagesFocused: Bool
+    private let gridSpacing = 14.0
     var body: some View {
         NavigationSplitView {
             sidebar
@@ -50,15 +55,7 @@ struct ContentView: View {
             if viewModel.pages.isEmpty {
                 ContentUnavailableView("No pages yet", systemImage: "doc.viewfinder", description: Text("Scan a document to review pages before exporting."))
             } else {
-                ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150, maximum: 220), spacing: 14)], spacing: 14) {
-                        ForEach(viewModel.pages) { page in
-                            PageThumbnail(page: page, selected: page.id == viewModel.selectedPageID)
-                                .onTapGesture { viewModel.selectedPageID = page.id }
-                                .contextMenu { Button("Rotate 90°") { Task { viewModel.selectedPageID = page.id; await viewModel.rotateSelectedPage() } }; Button("Delete", role: .destructive) { Task { viewModel.selectedPageID = page.id; await viewModel.deleteSelectedPage() } } }
-                        }
-                    }.padding(.vertical, 4)
-                }
+                pageGrid
             }
             HStack {
                 Button { Task { await viewModel.rotateSelectedPage() } } label: { Label("Rotate", systemImage: "rotate.right") }.disabled(viewModel.selectedPageID == nil)
@@ -82,10 +79,83 @@ struct ContentView: View {
                 }
                 Button { Task { await viewModel.saveExport() } } label: { Label("Save/Export", systemImage: "square.and.arrow.down") }.disabled(viewModel.pages.isEmpty || viewModel.isScanning)
                 Button { viewModel.revealInFinder() } label: { Label("Reveal in Finder", systemImage: "folder") }.disabled(viewModel.lastOutputs.isEmpty)
+                thumbnailSizeSlider
                 Spacer()
                 statusView
             }
         }.padding(22).frame(minWidth: 420, maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var thumbnailSizeSlider: some View {
+        Slider(value: $thumbnailSize, in: 110...360) {
+            Text("Thumbnail size")
+        } minimumValueLabel: {
+            Image(systemName: "photo").imageScale(.small).foregroundStyle(.secondary)
+        } maximumValueLabel: {
+            Image(systemName: "photo").imageScale(.large).foregroundStyle(.secondary)
+        }
+        .labelsHidden()
+        .controlSize(.small)
+        .frame(width: 170)
+        .help("Thumbnail size")
+        .accessibilityLabel("Thumbnail size")
+    }
+
+    /// Focuses the page area after a click. Writing `true` into the focus
+    /// state while it is already focused makes SwiftUI resign and re-acquire
+    /// focus, which flashes the focus ring, so the write is skipped then.
+    private func focusPages() {
+        if !pagesFocused { pagesFocused = true }
+    }
+
+    /// The columns the adaptive grid currently shows, needed for up/down navigation.
+    private var gridColumns: Int {
+        PageGridNavigation.columnCount(forWidth: gridWidth, minimumItemWidth: thumbnailSize, spacing: gridSpacing)
+    }
+
+    /// The page grid is a focusable area like the Finder's icon view: Tab
+    /// reaches it when keyboard navigation is on, clicking a page focuses it,
+    /// the arrow keys, Home and End move the selection, Space toggles the
+    /// Quick Look panel (which previews the selection and forwards these keys
+    /// back here while open), and a click on empty space clears the selection.
+    private var pageGrid: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: thumbnailSize, maximum: thumbnailSize * 1.5), spacing: gridSpacing)], spacing: gridSpacing) {
+                    ForEach(viewModel.pages) { page in
+                        PageThumbnail(page: page, selected: page.id == viewModel.selectedPageID, size: thumbnailSize)
+                            .id(page.id)
+                            .onTapGesture { viewModel.selectedPageID = page.id; focusPages() }
+                            .contextMenu {
+                                Button("Quick Look") { viewModel.selectedPageID = page.id; viewModel.toggleQuickLook() }
+                                Button("Rotate 90°") { Task { viewModel.selectedPageID = page.id; await viewModel.rotateSelectedPage() } }
+                                Button("Delete", role: .destructive) { Task { viewModel.selectedPageID = page.id; await viewModel.deleteSelectedPage() } }
+                            }
+                    }
+                }
+                .padding(.vertical, 4)
+                .onGeometryChange(for: Double.self) { $0.size.width } action: { gridWidth = $0 }
+                // Empty space below the last row also belongs to the area.
+                .frame(maxWidth: .infinity, minHeight: 0, alignment: .top)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { viewModel.selectedPageID = nil; focusPages() }
+            .focusable()
+            .focused($pagesFocused)
+            // Arrow keys are taken with onKeyPress rather than onMoveCommand:
+            // the scroll view would otherwise consume them for scrolling.
+            .onKeyPress(.leftArrow) { viewModel.selectPage(moving: .left, columns: gridColumns); return .handled }
+            .onKeyPress(.rightArrow) { viewModel.selectPage(moving: .right, columns: gridColumns); return .handled }
+            .onKeyPress(.upArrow) { viewModel.selectPage(moving: .up, columns: gridColumns); return .handled }
+            .onKeyPress(.downArrow) { viewModel.selectPage(moving: .down, columns: gridColumns); return .handled }
+            .onKeyPress(.home) { viewModel.selectPage(moving: .first, columns: gridColumns); return .handled }
+            .onKeyPress(.end) { viewModel.selectPage(moving: .last, columns: gridColumns); return .handled }
+            .onKeyPress(.space) { viewModel.toggleQuickLook(); return .handled }
+            .onChange(of: viewModel.selectedPageID) { _, id in
+                if let id { withAnimation { proxy.scrollTo(id) } }
+            }
+            .onChange(of: gridColumns, initial: true) { _, columns in viewModel.gridColumns = columns }
+        }
     }
 
     private var statusView: some View {
@@ -172,8 +242,29 @@ struct ContentView: View {
 }
 
 private struct PageThumbnail: View {
-    let page: StoredPage; let selected: Bool
-    var body: some View { VStack(alignment: .leading, spacing: 6) { if let image = NSImage(contentsOf: page.fileURL) { Image(nsImage: image).resizable().aspectRatio(contentMode: .fit).frame(maxWidth: .infinity, minHeight: 150, maxHeight: 250).background(.white) } else { Image(systemName: "photo").frame(maxWidth: .infinity, minHeight: 190) }; Text("Page \(page.pageIndex) · \(page.side.rawValue)").font(.caption).foregroundStyle(.secondary) }.padding(6).background(selected ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.08)).overlay(RoundedRectangle(cornerRadius: 8).stroke(selected ? Color.accentColor : .clear, lineWidth: 2)).clipShape(RoundedRectangle(cornerRadius: 8)) }
+    let page: StoredPage
+    let selected: Bool
+    /// Minimum width of the grid cell; the image height follows it.
+    let size: Double
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let image = NSImage(contentsOf: page.fileURL) {
+                Image(nsImage: image).resizable().aspectRatio(contentMode: .fit)
+                    .frame(maxWidth: .infinity, minHeight: size, maxHeight: size * 1.6)
+                    .background(.white)
+            } else {
+                Image(systemName: "photo").frame(maxWidth: .infinity, minHeight: size * 1.25)
+            }
+            Text("Page \(page.pageIndex) · \(page.side.rawValue)").font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(6)
+        .background(selected ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.08))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(selected ? Color.accentColor : .clear, lineWidth: 2))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
 }
 
 #Preview { ContentView() }
