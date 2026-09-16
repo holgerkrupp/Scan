@@ -34,6 +34,15 @@ final class FujitsuScanSnapDevice: ScannerDevice {
         status = .idle
     }
 
+    /// Reads the scanner's vital product data page. Diagnostic only: the
+    /// command flow is driven by the profile, not by this page.
+    func readVitalProductData() async throws -> FujitsuVitalProductData {
+        guard let commandEngine else {
+            throw ScannerError.transportUnavailable("No USB transport was provided for \(identity.name).")
+        }
+        return try await commandEngine.vitalProductData()
+    }
+
     func close() async {
         ScanTrace.post("Closing USB session.")
         await transport?.close()
@@ -187,6 +196,14 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         return FujitsuInquiry(vendor: vendor, product: product, version: version)
     }
 
+    /// `INQUIRY` with EVPD set and page code 0xf0, like SANE's `init_vpd()`.
+    /// The scanner may answer with fewer than the 204 requested bytes.
+    func vitalProductData() async throws -> FujitsuVitalProductData {
+        ScanTrace.post("Command: inquiry vital product data.")
+        let data = try await sendSCSICommand([0x12, 0x01, 0xf0, 0, 204, 0], expectedReadLength: 204, allowShortRead: true)
+        return FujitsuVitalProductData(bytes: [UInt8](data))
+    }
+
     func scan(options: ScanOptions, isCancelled: @escaping () -> Bool, onPage: @escaping (PageFrame) async throws -> Void) async throws -> Int {
         let plan = FujitsuScanPlan(options: options, profile: profile)
 
@@ -204,7 +221,7 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         try await modeSelectDropoutDefault(tolerateFailure: profile.toleratesModeSelectFailures)
         try await modeSelectBuffer(mode: plan.scannerBuffering ? .on : .off, tolerateFailure: profile.toleratesModeSelectFailures)
         try await setWindow(plan: plan)
-        if plan.scannerColorMode != .lineart {
+        if plan.scannerColorMode != .lineart, !profile.usesInternalGammaTable {
             do {
                 try await sendDefaultGammaLUT()
             } catch where profile.toleratesGammaTableFailure {
@@ -222,6 +239,8 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         // behind the transfer.
         var pendingSheet: Task<[PageFrame], Error>?
         let interlace = colorInterlace ?? .rgb
+        // SANE's `started`: set once the first sheet has been fed and SCAN issued.
+        var batchStarted = false
 
         do {
             var assignedPageCount = 0
@@ -244,10 +263,16 @@ private final class FujitsuSCSIOverUSBCommandEngine {
                         throw ScannerError.feederEmpty
                     }
                     ScanTrace.post("Document feeder is empty; batch complete.")
+                    if profile.usesSANECancelFlow {
+                        // SANE check_for_cancel(): a started batch is closed
+                        // with SCANNER CONTROL cancel once the feeder is empty.
+                        try? await scannerControl(function: 0x04, label: "cancel (batch complete)")
+                    }
                     break
                 }
 
                 try await startScan(plan: plan)
+                batchStarted = true
                 let rawImages = try await readSheet(plan: plan, isCancelled: isCancelled)
                 sheetNumber += 1
                 ScanTrace.post("Finished transferring sheet \(sheetNumber).")
@@ -279,9 +304,20 @@ private final class FujitsuSCSIOverUSBCommandEngine {
             try? await modeSelectBuffer(mode: .off, tolerateFailure: true)
             return deliveredPageCount
         } catch {
-            ScanTrace.post("Scan command flow failed; halting paper transport.")
-            try? await objectPosition(action: 0x04, label: "halt", waitsForReady: false)
-            try? await scannerControl(function: 0x04, label: "cancel")
+            if profile.usesSANECancelFlow {
+                // SANE sends nothing when the batch never started (for example
+                // an empty feeder) and only the cancel afterwards.
+                if batchStarted {
+                    ScanTrace.post("Scan command flow failed; cancelling the batch.")
+                    try? await scannerControl(function: 0x04, label: "cancel")
+                } else {
+                    ScanTrace.post("Scan command flow failed before the first sheet; nothing to cancel.")
+                }
+            } else {
+                ScanTrace.post("Scan command flow failed; halting paper transport.")
+                try? await objectPosition(action: 0x04, label: "halt", waitsForReady: false)
+                try? await scannerControl(function: 0x04, label: "cancel")
+            }
             if plan.scannerBuffering {
                 // Drop any sheets the scanner read ahead into its buffer.
                 try? await modeSelectBuffer(mode: .off, tolerateFailure: true)
@@ -347,7 +383,9 @@ private final class FujitsuSCSIOverUSBCommandEngine {
     }
 
     func cancel() async throws {
-        try? await objectPosition(action: 0x04, label: "halt", waitsForReady: false)
+        if !profile.usesSANECancelFlow {
+            try? await objectPosition(action: 0x04, label: "halt", waitsForReady: false)
+        }
         try await scannerControl(function: 0x04, label: "cancel")
     }
 
@@ -642,9 +680,11 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         descriptor[0x20] = plan.hardwareJPEG ? 0x81 : 0x00
         descriptor[0x21] = plan.hardwareJPEG ? plan.jpegQualityArgument : 0x00
 
+        // Byte 0x29: 0x80 selects the downloaded gamma table, 0 the built-in curve.
+        let gammaSelector: UInt8 = profile.usesInternalGammaTable ? 0x00 : 0x80
         if plan.scannerColorMode == .color {
             descriptor[0x28] = 0xc1
-            descriptor[0x29] = 0x80
+            descriptor[0x29] = gammaSelector
             descriptor[0x2a] = interlace.scanningOrder
             descriptor[0x2b] = interlace.scanningOrderArgument
             descriptor[0x2e] = 0
@@ -652,7 +692,7 @@ private final class FujitsuSCSIOverUSBCommandEngine {
             descriptor[0x32] = 0
         } else {
             descriptor[0x28] = 0x00
-            descriptor[0x29] = plan.scannerColorMode == .gray ? 0x80 : 0
+            descriptor[0x29] = plan.scannerColorMode == .gray ? gammaSelector : 0
             descriptor[0x2b] = 0
             descriptor[0x2f] = 0
             descriptor[0x30] = 0

@@ -46,6 +46,15 @@ final class FujitsuCommandTranscriptTests: XCTestCase {
         Scenario("ix500-empty-feeder", source: .adfFront, mode: .color, dpi: 300, sheets: 0, expectsFeederEmpty: true)
     ]
 
+    /// iX1600 scenarios pinned after hardware validation: native gray and
+    /// line-art windows, the hopper check, and scanner buffering.
+    static let ix1600Scenarios: [Scenario] = [
+        Scenario("ix1600-duplex-color-300-buffer", source: .adfDuplex, mode: .color, dpi: 300, sheets: 1, autoCrop: true, buffering: true),
+        Scenario("ix1600-front-gray-150", source: .adfFront, mode: .gray, dpi: 150, sheets: 1),
+        Scenario("ix1600-front-lineart-150", source: .adfFront, mode: .lineart, dpi: 150, sheets: 1),
+        Scenario("ix1600-empty-feeder", source: .adfFront, mode: .color, dpi: 300, sheets: 0, expectsFeederEmpty: true)
+    ]
+
     static let identity = identity(productID: 0x11a2)
 
     static func identity(productID: UInt16) -> ScannerIdentity {
@@ -134,23 +143,76 @@ final class FujitsuCommandTranscriptTests: XCTestCase {
         }
     }
 
-    func testIX1500UsesGenericColorFlowForColorAndSoftwareGray() async throws {
-        let driver = await FujitsuScanSnapIX1500Driver()
-        let identity = Self.identity(productID: 0x159f)
-        let color = Scenario("ix1500-color", source: .adfDuplex, mode: .color, dpi: 300, sheets: 1, autoCrop: true)
-        let gray = Scenario("ix1500-gray", source: .adfDuplex, mode: .gray, dpi: 300, sheets: 1, autoCrop: true)
+    /// The iX1300, iX1400 and iX1500 inherit the iX1600 profile, so all send
+    /// the same commands; the flow is SANE's generic one plus the iX500-style
+    /// hopper check, without the pre-read or quantisation table.
+    func testIX1600CommandSequencesArePinned() async throws {
+        for scenario in Self.ix1600Scenarios {
+            try await assertMatchesFixture(driver: FujitsuScanSnapIX1600Driver(), scenario: scenario, identity: Self.identity(productID: 0x1632))
+        }
+    }
 
-        let colorTranscript = try await Self.transcript(driver: driver, scenario: color, identity: identity)
-        let grayTranscript = try await Self.transcript(driver: driver, scenario: gray, identity: identity)
-
-        // Gray conversion happens after acquisition, so the scanner receives
-        // the same color command sequence for both requests.
-        XCTAssertEqual(grayTranscript, colorTranscript)
-
+    func testIX1x00SiblingsMirrorTheIX1600CommandFlow() async throws {
         let wrapperPrefix = "W 43" + String(repeating: "00", count: 0x12)
-        XCTAssertFalse(colorTranscript.contains { $0.hasPrefix(wrapperPrefix + "1d") }, "iX500 diagnostic pre-read must stay disabled")
-        XCTAssertFalse(colorTranscript.contains { $0.hasPrefix(wrapperPrefix + "2a0088") }, "iX500 JPEG table must stay disabled")
-        XCTAssertFalse(colorTranscript.contains { $0.hasPrefix(wrapperPrefix + "c2") }, "iX500 hopper check must stay disabled")
+        let scenarios = [
+            Scenario("ix1x00-duplex-color-300", source: .adfDuplex, mode: .color, dpi: 300, sheets: 1, autoCrop: true),
+            Scenario("ix1x00-front-gray-200", source: .adfFront, mode: .gray, dpi: 200, sheets: 1),
+            Scenario("ix1x00-front-lineart-150", source: .adfFront, mode: .lineart, dpi: 150, sheets: 1),
+            Scenario("ix1x00-duplex-color-400-buffer", source: .adfDuplex, mode: .color, dpi: 400, sheets: 2, autoCrop: true, buffering: true),
+            Scenario("ix1x00-empty-feeder", source: .adfFront, mode: .color, dpi: 300, sheets: 0, expectsFeederEmpty: true)
+        ]
+        for scenario in scenarios {
+            let ix1600 = try await Self.transcript(driver: FujitsuScanSnapIX1600Driver(), scenario: scenario, identity: Self.identity(productID: 0x1632))
+            let siblings: [(ScannerDriver, UInt16)] = [(FujitsuScanSnapIX1500Driver(), 0x159f), (FujitsuScanSnapIX1300Driver(), 0x162c), (FujitsuScanSnapIX1400Driver(), 0x1630)]
+            for (driver, productID) in siblings {
+                let sibling = try await Self.transcript(driver: driver, scenario: scenario, identity: Self.identity(productID: productID))
+                XCTAssertEqual(sibling, ix1600, "\(scenario.name) \(driver.name)")
+            }
+
+            XCTAssertTrue(ix1600.contains { $0.hasPrefix(wrapperPrefix + "c2") }, "\(scenario.name): hopper check")
+            XCTAssertFalse(ix1600.contains { $0.hasPrefix(wrapperPrefix + "1d") }, "\(scenario.name): iX500 diagnostic pre-read must stay disabled")
+            XCTAssertFalse(ix1600.contains { $0.hasPrefix(wrapperPrefix + "2a0088") }, "\(scenario.name): iX500 JPEG table must stay disabled")
+            // Native modes: the window's composition byte follows the request.
+            let expectedComposition: UInt8 = switch scenario.options.colorMode { case .lineart: 0; case .gray: 2; case .color: 5 }
+            let windowPayload = try XCTUnwrap(ix1600.first { $0.hasPrefix("W ") && $0.count == 2 + 2 * (scenario.options.source == .adfDuplex ? 136 : 72) && $0.hasPrefix("W 0000000000000040") })
+            let bytes = stride(from: 2, to: windowPayload.count, by: 2).map { UInt8(windowPayload[windowPayload.index(windowPayload.startIndex, offsetBy: $0)..<windowPayload.index(windowPayload.startIndex, offsetBy: $0 + 2)], radix: 16)! }
+            XCTAssertEqual(bytes[8 + 0x19], expectedComposition, "\(scenario.name): composition")
+            // Internal gamma curve: window byte 0x29 = 0 and no downloaded table.
+            XCTAssertEqual(bytes[8 + 0x29], 0, "\(scenario.name): internal gamma selector")
+            XCTAssertFalse(ix1600.contains { $0.hasPrefix(wrapperPrefix + "2a0083") }, "\(scenario.name): no gamma table download")
+            if scenario.options.acquisition.scannerBuffering {
+                XCTAssertTrue(ix1600.contains { $0 == "W 000000003a06c0c0" + "00000000" }, "\(scenario.name): buffer mode on")
+            }
+
+            // SANE's check_for_cancel(): a started batch ends with SCANNER
+            // CONTROL cancel after the feeder runs empty; an empty feeder at
+            // the start sends neither halt nor cancel.
+            let cancels = ix1600.filter { $0.hasPrefix(wrapperPrefix + "f104") }.count
+            let halts = ix1600.filter { $0.hasPrefix(wrapperPrefix + "3104") }.count
+            XCTAssertEqual(halts, 0, "\(scenario.name): no OBJECT POSITION halt")
+            XCTAssertEqual(cancels, scenario.expectsFeederEmpty ? 0 : 1, "\(scenario.name): closing cancel")
+            if !scenario.expectsFeederEmpty {
+                let cancelIndex = try XCTUnwrap(ix1600.firstIndex { $0.hasPrefix(wrapperPrefix + "f104") })
+                let lastFeed = try XCTUnwrap(ix1600.lastIndex { $0.hasPrefix(wrapperPrefix + "3101") })
+                XCTAssertGreaterThan(cancelIndex, lastFeed, "\(scenario.name): cancel follows the empty-feeder feed")
+            }
+        }
+    }
+
+    /// The validated S1500 and iX500 sequences must not pick up the SANE
+    /// cancel flow: no command after the empty feeder, halt then cancel when
+    /// the feeder is empty from the start.
+    func testS1500AndIX500KeepTheirBatchEndSequence() async throws {
+        let wrapperPrefix = "W 43" + String(repeating: "00", count: 0x12)
+        let twoSheets = Scenario("s1500-two-sheets", source: .adfFront, mode: .color, dpi: 200, sheets: 2)
+        let s1500 = try await Self.transcript(driver: FujitsuScanSnapS1500Driver(), scenario: twoSheets)
+        XCTAssertFalse(s1500.contains { $0.hasPrefix(wrapperPrefix + "f104") })
+
+        let empty = Scenario("ix500-empty", source: .adfFront, mode: .color, dpi: 300, sheets: 0, expectsFeederEmpty: true)
+        let ix500 = try await Self.transcript(driver: FujitsuScanSnapIX500Driver(), scenario: empty, identity: Self.identity(productID: 0x132b))
+        let halt = try XCTUnwrap(ix500.firstIndex { $0.hasPrefix(wrapperPrefix + "3104") })
+        let cancel = try XCTUnwrap(ix500.firstIndex { $0.hasPrefix(wrapperPrefix + "f104") })
+        XCTAssertLessThan(halt, cancel)
     }
 
     func testProtocolBackedModelsReproduceTheS1500ColorAndGraySequences() async throws {

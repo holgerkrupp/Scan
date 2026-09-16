@@ -1,5 +1,6 @@
 Native macOS scanning app with direct USB support for Fujitsu ScanSnap and
-fi-series document scanners, including legacy models and the ScanSnap iX1500.
+fi-series document scanners, including legacy models and the ScanSnap
+iX1300, iX1400, iX1500, and iX1600.
 
 ## Building
 
@@ -32,7 +33,11 @@ The native Fujitsu USB backends recognize the following models:
 | ScanSnap S510 / S510M | `0x1155` / `0x116f` | Validated on S510M hardware: duplex color at 300 dpi; optional buffer-page rejection and BGR interlace handled |
 | ScanSnap S1500 / S1500M | `0x11a2` | Validated on hardware |
 | ScanSnap iX500 | `0x132b` | Validated on hardware: simplex/duplex, color/gray/line-art, 150–600 dpi, multi-sheet batches with automatic length detection, scanner buffering, hardware JPEG, empty feeder |
-| ScanSnap iX1500 | `0x159f` | Protocol profile (generic Fujitsu command flow), not yet validated on hardware; gray/line-art are derived from color |
+| ScanSnap iX500EE | `0x13f3` | iX500 profile with its own product ID (SANE applies the iX500 rules to it), not yet validated on hardware |
+| ScanSnap iX1300 | `0x162c` | Inherits the iX1600 profile (SANE: generic flow, working), U-turn ADF only, not yet validated on hardware |
+| ScanSnap iX1400 | `0x1630` | Inherits the iX1600 profile (the iX1600 without touchscreen and Wi-Fi), not yet validated on hardware |
+| ScanSnap iX1500 | `0x159f` | Inherits the iX1600 profile (same generation and command flow), not yet validated on iX1500 hardware |
+| ScanSnap iX1600 | `0x1632` | Validated on hardware (firmware 0V00): duplex/simplex color, native gray and line-art, 150–600 dpi incl. 400, multi-sheet batches with automatic length detection, scanner buffering, hardware JPEG, 256 KiB reads, hopper check, empty feeder |
 | ScanSnap fi-5110EOX / EOX2 / EOX3 / EOXM | `0x1096` / `0x10e6` / `0x10f2` | Protocol profile (S1500 command flow), not yet validated on hardware |
 | fi-5110C, fi-5120C / fi-5220C | `0x1097`, `0x10e0` / `0x10e1` | Protocol profile (S1500 command flow), not yet validated on hardware; fi-5220C via ADF only |
 | fi-5530C / fi-5530C2 | `0x10e2` / `0x114a` | Protocol profile (S1500 command flow), not yet validated on hardware |
@@ -41,8 +46,9 @@ The native Fujitsu USB backends recognize the following models:
 
 Most profiles target legacy models that Ricoh no longer supports on current
 macOS: ScanSnap Home dropped the iX500 with macOS 15, and its fi Series macOS
-driver covers only fi-7000 and fi-8000 models. The iX1500 is the exception: it
-is also claimed here to provide the app's direct native USB path. The
+driver covers only fi-7000 and fi-8000 models. The iX1300, iX1400, iX1500 and
+iX1600 are the exception: they are also claimed here to provide the app's
+direct native USB path. The
 fi-5000/fi-6000 and fi-5110EOX profiles reuse the S1500 command flow with the
 model notes from SANE's `fujitsu` backend:
 colour interlacing is probed, the optional mode selects and the gamma table are
@@ -57,20 +63,38 @@ JPEG compression (about 2 MB instead of 27 MB per A4 color page over USB).
 Other Image Capture-compatible scanners continue to work through macOS’s
 Image Capture backend.
 
-### ScanSnap iX1500
+### ScanSnap iX1600, iX1500, iX1400 and iX1300
 
-The iX1500 is recognized over USB as `0x04c5/0x159f` and uses the generic
-Fujitsu SCSI-over-USB command flow documented by SANE. The native profile
-supports ADF front, back, and duplex acquisition at 150, 200, 300, and 600 dpi.
-The scanner is asked for color data; gray and line-art output are converted in
-the app.
+The iX1600 is recognized over USB as `0x04c5/0x1632`, the iX1500 as
+`0x04c5/0x159f`, the iX1400 as `0x04c5/0x1630` and the iX1300 as
+`0x04c5/0x162c`. All four use the generic Fujitsu SCSI-over-USB command flow
+documented by SANE (no iX500-style pre-read or JPEG quantisation table) with
+the hopper check before the first feed, the scanner's built-in gamma curve
+instead of a downloaded table (SANE's choice for this generation; the
+built-in curve renders mid-tones noticeably lighter), and SANE's way of closing
+a batch (a scanner-control cancel once the feeder is empty; the iX1600's
+firmware locked up with "unexpected error" on its display when a batch ended
+without it). The profile supports ADF front, back, and duplex acquisition at
+150, 200, 300, 400, and 600 dpi, asks the scanner for native color, gray, or
+line-art data, reads in 256 KiB chunks, and offers the same optional scanner
+buffering and hardware JPEG compression as the iX500. In hardware JPEG mode the
+iX1600 writes the full window height into the JPEG header and ends the data
+after the last real row; the app restores the true height from the restart
+markers.
 
-This profile has command-level test coverage but has not yet been validated on
-physical iX1500 hardware. Scanner buffering, hardware JPEG compression, Wi-Fi
-scanning, and touchscreen-triggered scans are therefore not enabled. If you
-test it on hardware, the opt-in harness in
-`ScanTests/FujitsuScanSnapHardwareTests.swift` can capture pages and a command
-trace for validation.
+The iX1600 (firmware 0V00) was validated on hardware: duplex color batches at
+300 dpi with automatic length detection, native gray and line-art, 400 and
+600 dpi windows, hardware JPEG, scanner buffering, 256 KiB reads, the vital
+product data page, the hopper check, and the empty-feeder path. The iX1500,
+iX1400 and iX1300 share the iX1600 profile because they share its generation
+and command flow (SANE drives all of them with the same generic flow and
+lists the iX1300 as working), but none of them has been tested with this
+profile on its own hardware yet. The iX1300's straight return path is not
+supported, only its regular feeder. Wi-Fi scanning and touchscreen-triggered
+scans are not supported. The
+opt-in harness in `ScanTests/FujitsuScanSnapHardwareTests.swift` captures
+pages, a command trace, and the VPD page, and can try profile variations on a
+new scanner without rebuilding.
 
 Note: ScanSnap Home keeps the scanner's USB interface open exclusively while
 its background process (`SshResident`) runs. Quit ScanSnap Home before using

@@ -1,6 +1,7 @@
 import Foundation
 
-/// Native SCSI-over-USB driver for the Fujitsu ScanSnap iX500 (USB 0x04c5/0x132b).
+/// Native SCSI-over-USB driver for the Fujitsu ScanSnap iX500 (USB 0x04c5/0x132b)
+/// and the iX500EE (0x04c5/0x13f3, same profile, not validated on hardware).
 ///
 /// The iX500 speaks the same Fujitsu SCSI dialect as the S1500 but needs a few
 /// extra steps before a batch (diagnostic pre-read mode, JPEG quantisation

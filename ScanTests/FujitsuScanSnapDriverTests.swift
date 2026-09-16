@@ -10,6 +10,10 @@ final class FujitsuScanSnapDriverTests: XCTestCase {
         name: "ScanSnap iX1500", manufacturer: "Fujitsu", model: "iX1500", serialNumber: "X15",
         connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x159f), locationID: 4
     )
+    private let ix1600Identity = ScannerIdentity(
+        name: "ScanSnap iX1600", manufacturer: "Fujitsu", model: "iX1600", serialNumber: "X16",
+        connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x1632), locationID: 5
+    )
     private let s1500Identity = ScannerIdentity(
         name: "ScanSnap S1500", manufacturer: "Fujitsu", model: "S1500", serialNumber: "S1",
         connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x11a2), locationID: 7
@@ -31,20 +35,119 @@ final class FujitsuScanSnapDriverTests: XCTestCase {
         let driver = ScannerDriverRegistry.live.driver(for: ix1500Identity)
         XCTAssertTrue(driver is FujitsuScanSnapIX1500Driver)
         XCTAssertFalse(FujitsuScanSnapIX500Driver().canDrive(ix1500Identity))
+        XCTAssertFalse(FujitsuScanSnapIX1600Driver().canDrive(ix1500Identity))
         XCTAssertFalse(FujitsuScanSnapS1500Driver().canDrive(ix1500Identity))
+        XCTAssertEqual(ScannerDriverRegistry.live.capabilities(for: ix1500Identity), FujitsuScanSnapModelProfile.ix1500.capabilities)
+    }
 
-        let profile = FujitsuScanSnapModelProfile.ix1500
-        XCTAssertEqual(ScannerDriverRegistry.live.capabilities(for: ix1500Identity), profile.capabilities)
-        XCTAssertEqual(profile.capabilities.sources, [.adfFront, .adfBack, .adfDuplex])
-        XCTAssertEqual(profile.capabilities.colorModes, [.color, .gray, .lineart])
-        XCTAssertEqual(profile.capabilities.resolutionsDPI, [150, 200, 300, 600])
-        XCTAssertTrue(profile.emulatesMonochromeInSoftware)
-        XCTAssertFalse(profile.sendsDiagnosticPreread)
-        XCTAssertFalse(profile.sendsJPEGQuantizationTable)
-        XCTAssertFalse(profile.checksHopperBeforeFirstFeed)
-        XCTAssertTrue(profile.waitsForReadyAfterFeed)
-        XCTAssertFalse(profile.capabilities.supportsScannerBuffering)
-        XCTAssertFalse(profile.capabilities.supportsHardwareCompression)
+    func testRegistryRoutesIX1600ToItsNativeDriver() {
+        let driver = ScannerDriverRegistry.live.driver(for: ix1600Identity)
+        XCTAssertTrue(driver is FujitsuScanSnapIX1600Driver)
+        XCTAssertFalse(FujitsuScanSnapIX500Driver().canDrive(ix1600Identity))
+        XCTAssertFalse(FujitsuScanSnapIX1500Driver().canDrive(ix1600Identity))
+        XCTAssertFalse(FujitsuScanSnapS1500Driver().canDrive(ix1600Identity))
+        XCTAssertEqual(ScannerDriverRegistry.live.capabilities(for: ix1600Identity), FujitsuScanSnapModelProfile.ix1600.capabilities)
+    }
+
+    func testIX500EEIsRoutedToTheIX500Profile() {
+        let identity = usbIdentity(0x13f3)
+        XCTAssertTrue(ScannerDriverRegistry.live.driver(for: identity) is FujitsuScanSnapIX500Driver)
+        XCTAssertEqual(ScannerDriverRegistry.live.capabilities(for: identity), FujitsuScanSnapModelProfile.ix500.capabilities)
+    }
+
+    func testIX1300AndIX1400AreRoutedToTheirOwnDriversWithTheIX1600Profile() {
+        XCTAssertTrue(ScannerDriverRegistry.live.driver(for: usbIdentity(0x162c)) is FujitsuScanSnapIX1300Driver)
+        XCTAssertTrue(ScannerDriverRegistry.live.driver(for: usbIdentity(0x1630)) is FujitsuScanSnapIX1400Driver)
+        XCTAssertEqual(FujitsuScanSnapModelProfile.ix1300.usbDeviceIDs, [USBDeviceID(vendorID: 0x04c5, productID: 0x162c)])
+        XCTAssertEqual(FujitsuScanSnapModelProfile.ix1400.usbDeviceIDs, [USBDeviceID(vendorID: 0x04c5, productID: 0x1630)])
+        for profile in [FujitsuScanSnapModelProfile.ix1300, .ix1400] {
+            XCTAssertEqual(profile.capabilities, FujitsuScanSnapModelProfile.ix1600.capabilities, profile.name)
+        }
+    }
+
+    /// The iX1300, iX1400 and iX1500 inherit the iX1600 profile: SANE's
+    /// generic flow plus the hopper check, the internal gamma curve, SANE's
+    /// cancel flow and the opt-in buffering/JPEG capabilities.
+    func testIX1x00ProfilesShareTheGenericFlowWithHopperCheckAndOptInFeatures() {
+        for profile in [FujitsuScanSnapModelProfile.ix1300, .ix1400, .ix1500, .ix1600] {
+            XCTAssertEqual(profile.capabilities.sources, [.adfFront, .adfBack, .adfDuplex], profile.name)
+            XCTAssertEqual(profile.capabilities.colorModes, [.color, .gray, .lineart], profile.name)
+            XCTAssertEqual(profile.capabilities.resolutionsDPI, [150, 200, 300, 400, 600], profile.name)
+            XCTAssertTrue(profile.capabilities.supportsScannerBuffering, profile.name)
+            XCTAssertTrue(profile.capabilities.supportsHardwareCompression, profile.name)
+            XCTAssertFalse(profile.emulatesMonochromeInSoftware, profile.name)
+            XCTAssertFalse(profile.sendsDiagnosticPreread, profile.name)
+            XCTAssertFalse(profile.sendsJPEGQuantizationTable, profile.name)
+            XCTAssertTrue(profile.checksHopperBeforeFirstFeed, profile.name)
+            XCTAssertTrue(profile.waitsForReadyAfterFeed, profile.name)
+            XCTAssertTrue(profile.probesColorInterlace, profile.name)
+            XCTAssertTrue(profile.toleratesModeSelectFailures, profile.name)
+            XCTAssertTrue(profile.toleratesGammaTableFailure, profile.name)
+            XCTAssertTrue(profile.usesSANECancelFlow, profile.name)
+            XCTAssertTrue(profile.usesInternalGammaTable, profile.name)
+            XCTAssertEqual(profile.pixelsPerLineModulus, 1, profile.name)
+            XCTAssertEqual(profile.lineartPixelsPerLineModulus, 8, profile.name)
+            XCTAssertEqual(profile.transferChunkSize, 256 * 1024, profile.name)
+            // 10-bit A/D per the iX1600 VPD page; only relevant for experiments
+            // that download the table.
+            XCTAssertEqual(profile.lookupTableInputBits, 10, profile.name)
+        }
+        XCTAssertEqual(FujitsuScanSnapModelProfile.ix1500.usbDeviceIDs, [USBDeviceID(vendorID: 0x04c5, productID: 0x159f)])
+        XCTAssertEqual(FujitsuScanSnapModelProfile.ix1600.usbDeviceIDs, [USBDeviceID(vendorID: 0x04c5, productID: 0x1632)])
+    }
+
+    func testVitalProductDataParsesLikeSANE() {
+        var bytes = [UInt8](repeating: 0, count: 0x74)
+        bytes[0x04] = 0x5f
+        bytes[0x05] = 0x02; bytes[0x06] = 0x58            // basic x 600
+        bytes[0x07] = 0x02; bytes[0x08] = 0x58            // basic y 600
+        bytes[0x0a] = 0x02; bytes[0x0b] = 0x58            // max x 600
+        bytes[0x0c] = 0x02; bytes[0x0d] = 0x58            // max y 600
+        bytes[0x0e] = 0x00; bytes[0x0f] = 0x32            // min x 50
+        bytes[0x10] = 0x00; bytes[0x11] = 0x32            // min y 50
+        bytes[0x12] = 0b0000_1001                         // 150, 200
+        bytes[0x13] = 0b0101_0100                         // 300, 400, 600
+        bytes[0x14...0x17] = [0, 0, 0x14, 0x38]           // 5176 units = 8.63 in
+        bytes[0x18...0x1b] = [0, 0, 0x36, 0xb0]           // 14000 units
+        bytes[0x1c] = 0b1000_1010                         // color, gray, lineart
+        bytes[0x20] = 0b1001_0000                         // adf, duplex
+        bytes[0x21] = 0x08                                // adbits 8
+        bytes[0x22...0x25] = [0x00, 0x40, 0x00, 0x00]     // 4 MiB buffer
+        bytes[0x28] = 0b0000_0110                         // send diag, read diag
+        bytes[0x2b] = 0b0000_0100                         // hw status
+        bytes[0x31] = 0b0000_0010                         // scanner control
+        bytes[0x52] = 0xff; bytes[0x54] = 0xff            // brightness, contrast steps
+        bytes[0x57] = 0x31                                // 3 internal, 1 downloadable gamma
+        bytes[0x5a] = 0b0000_1000                         // baseline JPEG
+        bytes[0x5b] = 0b1000_0000                         // JPEG gray mode 2
+
+        let vpd = FujitsuVitalProductData(bytes: bytes)
+        XCTAssertEqual(vpd.payloadLength, 0x5f)
+        XCTAssertEqual(vpd.basicXResolutionDPI, 600)
+        XCTAssertEqual(vpd.maxYResolutionDPI, 600)
+        XCTAssertEqual(vpd.minXResolutionDPI, 50)
+        XCTAssertEqual(vpd.standardResolutionsDPI, [150, 200, 300, 400, 600])
+        XCTAssertEqual(vpd.maxWindowWidth, 5176)
+        XCTAssertEqual(vpd.maxWindowLength, 14000)
+        XCTAssertEqual(vpd.maxWidthInches, 5176.0 / 600.0, accuracy: 0.001)
+        XCTAssertTrue(vpd.supportsColor); XCTAssertTrue(vpd.supportsGray); XCTAssertTrue(vpd.supportsLineart)
+        XCTAssertTrue(vpd.hasADF); XCTAssertFalse(vpd.hasFlatbed); XCTAssertTrue(vpd.hasDuplex)
+        XCTAssertEqual(vpd.adBits, 8)
+        XCTAssertEqual(vpd.bufferBytes, 4 * 1024 * 1024)
+        XCTAssertTrue(vpd.hasSendDiagnosticCommand); XCTAssertTrue(vpd.hasReadDiagnosticCommand)
+        XCTAssertTrue(vpd.hasHardwareStatusCommand); XCTAssertTrue(vpd.hasScannerControlCommand)
+        XCTAssertEqual(vpd.brightnessSteps, 255); XCTAssertEqual(vpd.contrastSteps, 255); XCTAssertEqual(vpd.thresholdSteps, 0)
+        XCTAssertEqual(vpd.internalGammaTables, 3); XCTAssertEqual(vpd.downloadableGammaTables, 1)
+        XCTAssertTrue(vpd.supportsBaselineJPEG)
+        XCTAssertEqual(vpd.jpegGrayMode, 2)
+        XCTAssertFalse(vpd.summary.isEmpty)
+        XCTAssertEqual(vpd.hexDump.split(separator: "\n").count, 8)
+
+        // A short page must not crash; missing bytes read as zero.
+        let short = FujitsuVitalProductData(bytes: [0, 0, 0, 0, 0x10])
+        XCTAssertEqual(short.payloadLength, 0x10)
+        XCTAssertEqual(short.standardResolutionsDPI, [])
+        XCTAssertFalse(short.supportsBaselineJPEG)
     }
 
     func testS1500DriverStillClaimsOnlyItsValidatedID() {
@@ -87,14 +190,14 @@ final class FujitsuScanSnapDriverTests: XCTestCase {
     }
 
     func testNativeDriversClaimDisjointIDsAndLeaveVendorSupportedModelsAlone() {
-        let drivers: [ScannerDriver] = [FujitsuScanSnapS300Driver(), FujitsuScanSnapS1500Driver(), FujitsuScanSnapIX500Driver(), FujitsuScanSnapIX1500Driver(), FujitsuFiSeriesDriver()]
+        let drivers: [ScannerDriver] = [FujitsuScanSnapS300Driver(), FujitsuScanSnapS1500Driver(), FujitsuScanSnapIX500Driver(), FujitsuScanSnapIX1500Driver(), FujitsuScanSnapIX1600Driver(), FujitsuScanSnapIX1300Driver(), FujitsuScanSnapIX1400Driver(), FujitsuFiSeriesDriver()]
         var claimed = Set<USBDeviceID>()
         for driver in drivers {
             XCTAssertTrue(claimed.isDisjoint(with: driver.supportedUSBDeviceIDs), driver.name)
             claimed.formUnion(driver.supportedUSBDeviceIDs)
         }
         // Still supported by Ricoh on current macOS (ScanSnap Home, fi Series macOS driver).
-        for productID: UInt16 in [0x13f4 /* iX100 */, 0x132e /* fi-7160 */, 0x14df /* fi-7140 */, 0x151f /* fi-7030 */] {
+        for productID: UInt16 in [0x13f4 /* iX100 */, 0x128e /* SV600 */, 0x03e3 /* iX2400 product ID under the Ricoh vendor */, 0x132e /* fi-7160 */, 0x14df /* fi-7140 */, 0x151f /* fi-7030 */] {
             XCTAssertNil(ScannerDriverRegistry.live.driver(for: usbIdentity(productID)), String(format: "0x%04x", productID))
         }
     }
@@ -137,18 +240,34 @@ final class FujitsuScanSnapDriverTests: XCTestCase {
         XCTAssertTrue(plan.traceDescription.contains("gray (scanned as color)"))
     }
 
-    func testIX1500PlanDerivesMonochromeFromColorUsingGenericGeometry() {
-        let options = ScanOptions(acquisition: AcquisitionSettings(source: .adfDuplex, colorMode: .gray, resolutionDPI: 150))
-        let plan = FujitsuScanPlan(options: options, profile: .ix1500)
+    func testIX1x00PlansUseNativeModesAndGenericGeometry() {
+        for profile in [FujitsuScanSnapModelProfile.ix1500, .ix1600] {
+            let gray = FujitsuScanPlan(options: ScanOptions(acquisition: AcquisitionSettings(source: .adfDuplex, colorMode: .gray, resolutionDPI: 150)), profile: profile)
+            XCTAssertEqual(gray.colorMode, .gray, profile.name)
+            XCTAssertEqual(gray.scannerColorMode, .gray, profile.name)
+            XCTAssertEqual(gray.composition, 2, profile.name)
+            XCTAssertEqual(gray.bitsPerPixel, 8, profile.name)
+            XCTAssertEqual(gray.imageSize.width, 1275, profile.name)
+            XCTAssertEqual(gray.widthScannerUnits, 10_200, profile.name)
+            XCTAssertEqual(gray.bytesPerLine(forWidth: 1275), 1275, profile.name)
 
-        XCTAssertEqual(plan.colorMode, .gray)
-        XCTAssertEqual(plan.scannerColorMode, .color)
-        XCTAssertEqual(plan.composition, 5)
-        XCTAssertEqual(plan.bitsPerPixel, 8)
-        XCTAssertEqual(plan.imageSize.width, 1275)
-        XCTAssertEqual(plan.widthScannerUnits, 10_200)
-        XCTAssertEqual(plan.bytesPerLine(forWidth: 1275), 1275 * 3)
-        XCTAssertTrue(plan.traceDescription.contains("gray (scanned as color)"))
+            let lineart = FujitsuScanPlan(options: ScanOptions(acquisition: AcquisitionSettings(source: .adfFront, colorMode: .lineart, resolutionDPI: 150)), profile: profile)
+            XCTAssertEqual(lineart.scannerColorMode, .lineart, profile.name)
+            XCTAssertEqual(lineart.imageSize.width, 1272, profile.name)
+
+            let color400 = FujitsuScanPlan(options: ScanOptions(acquisition: AcquisitionSettings(source: .adfDuplex, colorMode: .color, resolutionDPI: 400)), profile: profile)
+            XCTAssertNoThrow(try profile.capabilities.validate(color400.options), profile.name)
+            XCTAssertEqual(color400.imageSize.width, 3400, profile.name)
+
+            var jpeg = ScanOptions(acquisition: AcquisitionSettings(source: .adfDuplex, colorMode: .color, resolutionDPI: 300, scannerBuffering: true, hardwareCompression: true))
+            jpeg.export.jpegQuality = 0.92
+            XCTAssertNoThrow(try profile.capabilities.validate(jpeg), profile.name)
+            let plan = FujitsuScanPlan(options: jpeg, profile: profile)
+            XCTAssertTrue(plan.hardwareJPEG, profile.name)
+            XCTAssertTrue(plan.scannerBuffering, profile.name)
+            XCTAssertEqual(plan.jpegQualityArgument, 5, profile.name)
+            XCTAssertEqual(plan.imageSize.width, 2544, profile.name)
+        }
     }
 
     func testS1500PlanIsUnchangedByProfileRefactor() {
@@ -166,6 +285,13 @@ final class FujitsuScanSnapDriverTests: XCTestCase {
                 XCTAssertEqual(plan.composition, composition)
                 XCTAssertEqual(plan.bitsPerPixel, bits)
             }
+        }
+    }
+
+    func testValidatedProfilesKeepTheHaltThenCancelSequence() {
+        for profile in [FujitsuScanSnapModelProfile.s1500, .s500, .s510, .ix500, .fi5110EOX, .fi5000, .fi5530C, .fi6000] {
+            XCTAssertFalse(profile.usesSANECancelFlow, profile.name)
+            XCTAssertFalse(profile.usesInternalGammaTable, profile.name)
         }
     }
 

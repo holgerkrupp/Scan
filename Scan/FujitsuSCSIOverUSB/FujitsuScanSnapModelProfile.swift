@@ -57,6 +57,22 @@ struct FujitsuScanSnapModelProfile: Sendable {
     /// `lookupTableInputBits` is inferred rather than validated set this.
     let toleratesGammaTableFailure: Bool
 
+    /// End batches and errors the way SANE's `check_for_cancel()` does: a
+    /// batch that has fed at least one sheet is closed with `SCANNER CONTROL`
+    /// cancel once the feeder runs empty, an error after the first feed sends
+    /// only that cancel (no `OBJECT POSITION` halt), and nothing is sent when
+    /// the batch never started. The S1500 and iX500 keep their validated
+    /// sequence instead: no command after the empty feeder, halt then cancel
+    /// on errors.
+    let usesSANECancelFlow: Bool
+
+    /// Select the scanner's built-in gamma curve (window byte 0x29 = 0) and
+    /// skip the downloadable table, as SANE's `set_window()` does since v139
+    /// when the scanner has an internal table and brightness/contrast are at
+    /// their defaults ("fixes bright/contrast for iX1500"). With the
+    /// downloaded linear table paper comes back around 245 of 255.
+    let usesInternalGammaTable: Bool
+
     /// Upper bound for one `READ` of image data. The engine rounds it down to a
     /// whole number of scan lines. Larger values mean fewer SCSI round trips.
     let transferChunkSize: Int
@@ -92,6 +108,8 @@ struct FujitsuScanSnapModelProfile: Sendable {
         probesColorInterlace: false,
         toleratesModeSelectFailures: false,
         toleratesGammaTableFailure: false,
+        usesSANECancelFlow: false,
+        usesInternalGammaTable: false,
         // The S1500's USB image endpoint terminates data phases after 32 KiB.
         transferChunkSize: 32 * 1024,
         // 1024-entry table (10-bit A/D), the validated S1500 payload.
@@ -114,6 +132,8 @@ struct FujitsuScanSnapModelProfile: Sendable {
         probesColorInterlace: false,
         toleratesModeSelectFailures: false,
         toleratesGammaTableFailure: false,
+        usesSANECancelFlow: false,
+        usesInternalGammaTable: false,
         transferChunkSize: 32 * 1024,
         lookupTableInputBits: 10
     )
@@ -139,6 +159,8 @@ struct FujitsuScanSnapModelProfile: Sendable {
         // treats unsupported optional mode pages as warnings and continues.
         toleratesModeSelectFailures: true,
         toleratesGammaTableFailure: false,
+        usesSANECancelFlow: false,
+        usesInternalGammaTable: false,
         transferChunkSize: 32 * 1024,
         lookupTableInputBits: 10
     )
@@ -155,13 +177,16 @@ struct FujitsuScanSnapModelProfile: Sendable {
         )
     }
 
-    /// Fujitsu ScanSnap iX500. Quirks follow SANE `fujitsu.c` `init_model()`:
-    /// `need_q_table`, `need_diag_preread`, `ppl_mod_by_mode[COLOR] = 2`,
-    /// `hopper_before_op`, `no_wait_after_op`, and software-emulated
-    /// grayscale/line-art (`can_mode[...] = 2`).
+    /// Fujitsu ScanSnap iX500 (USB 0x132b) and iX500EE (0x13f3). Quirks
+    /// follow SANE `fujitsu.c` `init_model()`: `need_q_table`,
+    /// `need_diag_preread`, `ppl_mod_by_mode[COLOR] = 2`, `hopper_before_op`,
+    /// `no_wait_after_op`, and software-emulated grayscale/line-art
+    /// (`can_mode[...] = 2`). SANE applies the same rules to the iX500EE
+    /// because it matches the model name "iX500"; only the iX500 has been
+    /// validated on hardware.
     static let ix500 = FujitsuScanSnapModelProfile(
-        name: "Fujitsu ScanSnap iX500",
-        usbDeviceIDs: [USBDeviceID(vendorID: 0x04c5, productID: 0x132b)],
+        name: "Fujitsu ScanSnap iX500/iX500EE",
+        usbDeviceIDs: [USBDeviceID(vendorID: 0x04c5, productID: 0x132b), USBDeviceID(vendorID: 0x04c5, productID: 0x13f3)],
         capabilities: ScannerCapabilities(
             sources: [.adfFront, .adfBack, .adfDuplex],
             colorModes: [.color, .gray, .lineart],
@@ -185,6 +210,8 @@ struct FujitsuScanSnapModelProfile: Sendable {
         probesColorInterlace: true,
         toleratesModeSelectFailures: true,
         toleratesGammaTableFailure: false,
+        usesSANECancelFlow: false,
+        usesInternalGammaTable: false,
         // Validated on hardware: 256 KiB reads cut the per-sheet command count
         // from ~1,800 to ~210 for a duplex A4 sheet at 300 dpi.
         transferChunkSize: 256 * 1024,
@@ -192,17 +219,83 @@ struct FujitsuScanSnapModelProfile: Sendable {
         lookupTableInputBits: 8
     )
 
-    /// Fujitsu ScanSnap iX1500 (USB 0x04c5/0x159f). SANE's `fujitsu`
-    /// backend drives this model with the generic Fujitsu command flow and no
-    /// `init_model()` overrides. The scanner produces colour data; grayscale
-    /// and line-art are derived in software. Not yet validated on hardware.
-    static let ix1500 = protocolBacked(
-        name: "Fujitsu ScanSnap iX1500",
-        productIDs: [0x159f],
-        resolutionsDPI: [150, 200, 300, 600],
-        lookupTableInputBits: 10,
-        emulatesMonochromeInSoftware: true
-    )
+    /// Fujitsu ScanSnap iX1600 (USB 0x04c5/0x1632). SANE's `fujitsu` backend
+    /// drives it with the generic Fujitsu command flow and no `init_model()`
+    /// overrides, and its VPD page (firmware 0V00) confirms the profile:
+    /// 10-bit A/D, native line-art/gray/colour, 50-600 dpi with 400 dpi
+    /// listed as standard, GET HW STATUS, baseline JPEG, an internal gamma
+    /// table, 576 MB of buffer memory.
+    ///
+    /// Validated on hardware (see the architecture notes): duplex colour
+    /// batches with automatic length detection, native gray and line-art,
+    /// hardware JPEG, scanner buffering, 256 KiB reads, the hopper check, the
+    /// empty-feeder path and SANE's batch-closing cancel.
+    static let ix1600 = ix1x00(name: "Fujitsu ScanSnap iX1600", productID: 0x1632)
+
+    /// Fujitsu ScanSnap iX1500 (USB 0x04c5/0x159f). Same generation, paper
+    /// path and Fujitsu dialect as the iX1600 (SANE treats both with the
+    /// generic flow), so it inherits the iX1600 profile. Not yet exercised on
+    /// iX1500 hardware with this profile.
+    static let ix1500 = ix1x00(name: "Fujitsu ScanSnap iX1500", productID: 0x159f)
+
+    /// Fujitsu ScanSnap iX1300 (USB 0x04c5/0x162c). SANE lists it as working
+    /// with the generic flow and no `init_model()` overrides, like the iX1600.
+    /// Only its U-turn ADF is driven; the straight return path (SANE
+    /// `SC_function_rpath`) is not modelled. Not yet exercised on hardware.
+    static let ix1300 = ix1x00(name: "Fujitsu ScanSnap iX1300", productID: 0x162c)
+
+    /// Fujitsu ScanSnap iX1400 (USB 0x04c5/0x1630): the iX1600 without
+    /// touchscreen and Wi-Fi. SANE lists it as untested with the generic
+    /// flow. Not yet exercised on hardware.
+    static let ix1400 = ix1x00(name: "Fujitsu ScanSnap iX1400", productID: 0x1630)
+
+    /// The iX1300/iX1400/iX1500/iX1600 profile: SANE's generic flow (no iX500-style pre-read
+    /// or quantisation table, TEST UNIT READY after the feed, unrounded colour
+    /// widths, whole-byte line-art widths, best-effort optional mode pages and
+    /// gamma table, probed colour interlacing), the scanner's internal gamma
+    /// curve, SANE's cancel flow, the hopper check, 256 KiB reads, and the
+    /// opt-in buffering and hardware-JPEG capabilities.
+    private static func ix1x00(name: String, productID: UInt16) -> FujitsuScanSnapModelProfile {
+        FujitsuScanSnapModelProfile(
+            name: name,
+            usbDeviceIDs: [USBDeviceID(vendorID: 0x04c5, productID: productID)],
+            capabilities: ScannerCapabilities(
+                sources: [.adfFront, .adfBack, .adfDuplex],
+                colorModes: [.color, .gray, .lineart],
+                resolutionsDPI: [150, 200, 300, 400, 600],
+                supportsBlankPageRemoval: true,
+                supportsDeskew: true,
+                supportsAutoCrop: true,
+                supportsDuplex: true,
+                supportsScannerBuffering: true,
+                supportsHardwareCompression: true
+            ),
+            sendsDiagnosticPreread: false,
+            sendsJPEGQuantizationTable: false,
+            checksHopperBeforeFirstFeed: true,
+            waitsForReadyAfterFeed: true,
+            // The VPD advertises native gray and line-art; both were validated
+            // on the iX1600 (correct polarity, whole-byte line-art rows).
+            emulatesMonochromeInSoftware: false,
+            pixelsPerLineModulus: 1,
+            lineartPixelsPerLineModulus: 8,
+            probesColorInterlace: true,
+            toleratesModeSelectFailures: true,
+            toleratesGammaTableFailure: true,
+            // The iX1600's display showed "unexpected error" and its firmware
+            // stopped answering after a batch that ended without SANE's
+            // closing cancel, so this generation follows check_for_cancel().
+            usesSANECancelFlow: true,
+            // SANE v139 behaviour for scanners with an internal table and no
+            // brightness/contrast steps. On the iX1600 the internal curve lifts
+            // the mid-tones by ~50 levels compared with the linear download.
+            usesInternalGammaTable: true,
+            // Validated on the iX1600: 260,100-byte reads (34 colour lines at
+            // 300 dpi), no short data phases.
+            transferChunkSize: 256 * 1024,
+            lookupTableInputBits: 10
+        )
+    }
 
     // MARK: - Protocol-backed models without current macOS support
 
@@ -276,6 +369,8 @@ struct FujitsuScanSnapModelProfile: Sendable {
             probesColorInterlace: true,
             toleratesModeSelectFailures: true,
             toleratesGammaTableFailure: true,
+            usesSANECancelFlow: false,
+            usesInternalGammaTable: false,
             transferChunkSize: 32 * 1024,
             lookupTableInputBits: lookupTableInputBits
         )
