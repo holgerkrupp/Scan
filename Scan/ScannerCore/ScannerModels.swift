@@ -84,13 +84,20 @@ struct AcquisitionSettings: Hashable, Sendable, Codable {
 }
 struct ImageProcessingSettings: Hashable, Sendable, Codable {
     var removeBlankPages: Bool
+    /// Crops to the content's bounding box, removing the paper margins.
     var autoCrop: Bool
+    /// Straightens the sheet and crops to the page inside its edges
+    /// (`PageAlignment`), like ScanSnap Home's automatic alignment.
     var deskew: Bool
     var autoRotate: Bool
     var rotation: PageRotation
     /// Raises near-white page tones toward white. Zero preserves the scanner's
     /// original tonal range; one provides the strongest paper-shadow cleanup.
     var paperCleanup: Double
+    /// Measures each page's paper level and stretches it to white, the way
+    /// ScanSnap Home renders plain paper white although the scanner delivers
+    /// it as light gray (`ScanImageProcessor.whitenPaper`).
+    var whitenPaper: Bool
 
     init(
         removeBlankPages: Bool = false,
@@ -98,7 +105,8 @@ struct ImageProcessingSettings: Hashable, Sendable, Codable {
         deskew: Bool = false,
         autoRotate: Bool = false,
         rotation: PageRotation = .degrees0,
-        paperCleanup: Double = 0
+        paperCleanup: Double = 0,
+        whitenPaper: Bool = false
     ) {
         self.removeBlankPages = removeBlankPages
         self.autoCrop = autoCrop
@@ -106,10 +114,11 @@ struct ImageProcessingSettings: Hashable, Sendable, Codable {
         self.autoRotate = autoRotate
         self.rotation = rotation
         self.paperCleanup = paperCleanup
+        self.whitenPaper = whitenPaper
     }
 
     private enum CodingKeys: String, CodingKey {
-        case removeBlankPages, autoCrop, deskew, autoRotate, rotation, paperCleanup
+        case removeBlankPages, autoCrop, deskew, autoRotate, rotation, paperCleanup, whitenPaper
     }
 
     // Keep profiles written before paper cleanup was introduced readable and
@@ -122,6 +131,7 @@ struct ImageProcessingSettings: Hashable, Sendable, Codable {
         autoRotate = try container.decodeIfPresent(Bool.self, forKey: .autoRotate) ?? false
         rotation = try container.decodeIfPresent(PageRotation.self, forKey: .rotation) ?? .degrees0
         paperCleanup = try container.decodeIfPresent(Double.self, forKey: .paperCleanup) ?? 0
+        whitenPaper = try container.decodeIfPresent(Bool.self, forKey: .whitenPaper) ?? false
     }
 }
 struct ExportSettings: Hashable, Sendable, Codable {
@@ -156,9 +166,9 @@ struct ScanProfile: Identifiable, Hashable, Sendable, Codable {
     let id: UUID; var name: String; var options: ScanOptions
     init(id: UUID = UUID(), name: String, options: ScanOptions) { self.id = id; self.name = name; self.options = options }
     static let defaults: [ScanProfile] = [
-        ScanProfile(name: "Duplex PDF 300 dpi color", options: ScanOptions(acquisition: AcquisitionSettings(source: .adfDuplex, colorMode: .color, resolutionDPI: 300), processing: ImageProcessingSettings(removeBlankPages: true, autoCrop: true, deskew: true, autoRotate: true), export: ExportSettings(outputFormat: .pdf, sizePreset: .highQuality, outputDPI: 300, jpegQuality: 0.92))),
-        ScanProfile(name: "Duplex searchable PDF", options: ScanOptions(acquisition: AcquisitionSettings(source: .adfDuplex, colorMode: .color, resolutionDPI: 300), processing: ImageProcessingSettings(removeBlankPages: true, autoCrop: true, deskew: true, autoRotate: true), export: ExportSettings(outputFormat: .searchablePDF, sizePreset: .highQuality, outputDPI: 300, jpegQuality: 0.92, ocrLanguages: ["en-US"]))),
-        ScanProfile(name: "Single-sided JPEG", options: ScanOptions(acquisition: AcquisitionSettings(source: .adfFront, colorMode: .color, resolutionDPI: 300), export: ExportSettings(outputFormat: .jpeg, sizePreset: .highQuality, outputDPI: 300, jpegQuality: 0.92, exportMode: .separateFiles)))
+        ScanProfile(name: "Duplex PDF 300 dpi color", options: ScanOptions(acquisition: AcquisitionSettings(source: .adfDuplex, colorMode: .color, resolutionDPI: 300), processing: ImageProcessingSettings(removeBlankPages: true, autoCrop: true, deskew: true, autoRotate: true, whitenPaper: true), export: ExportSettings(outputFormat: .pdf, sizePreset: .highQuality, outputDPI: 300, jpegQuality: 0.92))),
+        ScanProfile(name: "Duplex searchable PDF", options: ScanOptions(acquisition: AcquisitionSettings(source: .adfDuplex, colorMode: .color, resolutionDPI: 300), processing: ImageProcessingSettings(removeBlankPages: true, autoCrop: true, deskew: true, autoRotate: true, whitenPaper: true), export: ExportSettings(outputFormat: .searchablePDF, sizePreset: .highQuality, outputDPI: 300, jpegQuality: 0.92, ocrLanguages: ["en-US"]))),
+        ScanProfile(name: "Single-sided JPEG", options: ScanOptions(acquisition: AcquisitionSettings(source: .adfFront, colorMode: .color, resolutionDPI: 300), processing: ImageProcessingSettings(whitenPaper: true), export: ExportSettings(outputFormat: .jpeg, sizePreset: .highQuality, outputDPI: 300, jpegQuality: 0.92, exportMode: .separateFiles)))
     ]
 }
 

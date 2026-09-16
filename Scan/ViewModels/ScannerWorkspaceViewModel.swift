@@ -3,21 +3,72 @@ import Foundation
 import Observation
 import SwiftUI
 
+/// A page as the scanner delivered it. Raw pages are kept for the whole
+/// review session so the processing options can be changed and re-applied.
+struct RawPage: Identifiable, Sendable {
+    let id: UUID
+    let pageIndex: Int
+    let side: PageSide
+    let pixelFormat: PagePixelFormat
+    let width: Int
+    let height: Int
+    let resolutionDPI: Int
+    let fileURL: URL
+
+    nonisolated init(frame: PageFrame, fileURL: URL) {
+        id = frame.id; pageIndex = frame.pageIndex; side = frame.side; pixelFormat = frame.pixelFormat; width = frame.width; height = frame.height; resolutionDPI = frame.resolutionDPI; self.fileURL = fileURL
+    }
+
+    nonisolated func frame() throws -> PageFrame {
+        PageFrame(id: id, pageIndex: pageIndex, side: side, pixelFormat: pixelFormat, width: width, height: height, resolutionDPI: resolutionDPI, data: try Data(contentsOf: fileURL, options: .mappedIfSafe))
+    }
+}
+
+/// Adjustments made to one page in the workspace, applied on top of the
+/// profile's processing settings each time the page is rendered.
+struct PageEdits: Equatable, Sendable {
+    /// Quarter turns clockwise added to the profile's rotation.
+    var quarterTurns = 0
+    /// Straighten and crop this page even if the profile does not.
+    var align = false
+}
+
+/// Files of one review session: the raw scans and the processed pages the
+/// workspace shows and exports.
 actor ScanPageStore {
     private let folder: URL
     init() {
         folder = FileManager.default.temporaryDirectory.appendingPathComponent("Scan-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     }
-    func append(_ frame: PageFrame) throws -> StoredPage {
-        let url = folder.appendingPathComponent("\(frame.id.uuidString).page")
+
+    func appendRaw(_ frame: PageFrame) throws -> RawPage {
+        let url = folder.appendingPathComponent("Raw \(Self.baseName(for: frame))").appendingPathExtension(Self.fileExtension(for: frame.pixelFormat))
+        try frame.data.write(to: url, options: .atomic)
+        return RawPage(frame: frame, fileURL: url)
+    }
+
+    /// Writes the processed rendition of a raw page. Named and typed like a
+    /// document so Quick Look shows a readable title and picks the image previewer.
+    func writeProcessed(_ frame: PageFrame) throws -> StoredPage {
+        let url = folder.appendingPathComponent("Page \(Self.baseName(for: frame))").appendingPathExtension(Self.fileExtension(for: frame.pixelFormat))
         try frame.data.write(to: url, options: .atomic)
         return StoredPage(frame: frame, fileURL: url)
     }
-    func replace(_ page: StoredPage, with frame: PageFrame) throws -> StoredPage {
-        try frame.data.write(to: page.fileURL, options: .atomic)
-        return StoredPage(frame: frame, fileURL: page.fileURL)
+
+    private static func baseName(for frame: PageFrame) -> String {
+        "\(frame.pageIndex)\(frame.side == .unknown ? "" : " \(frame.side.rawValue)") \(frame.id.uuidString.prefix(8))"
     }
+
+    static func fileExtension(for format: PagePixelFormat) -> String {
+        switch format {
+        case .jpeg: "jpg"
+        case .png: "png"
+        case .tiff: "tiff"
+        case .rgb8, .gray8, .unknown: "page"
+        }
+    }
+
     func clear() { try? FileManager.default.removeItem(at: folder) }
 }
 
@@ -35,8 +86,24 @@ final class ScannerWorkspaceViewModel {
     var capabilities: ScannerCapabilities?
     var destinationFolder: URL { didSet { persistDestinationBookmark() } }
     var status: ScannerStatus = .disconnected
-    var pages: [StoredPage] = []
+    /// The scans as delivered, in display order. They stay for the whole
+    /// review session so the processing options can be re-applied.
+    private(set) var rawPages: [RawPage] = []
+    /// Per-page rotation and alignment overrides.
+    private(set) var pageEdits: [UUID: PageEdits] = [:]
+    /// The processed rendition of each raw page; missing while it is being
+    /// processed or when it was found blank.
+    private(set) var processedPages: [UUID: StoredPage] = [:]
+    /// Raw pages hidden because "Remove blank pages" found them empty.
+    private(set) var blankPageIDs: Set<UUID> = []
+    /// Pages still being (re)processed in the background.
+    private(set) var pendingProcessingCount = 0
+    /// What the grid shows and the export writes: the processed pages, in
+    /// scan order, without the blank ones.
+    var pages: [StoredPage] { rawPages.compactMap { processedPages[$0.id] } }
+    var hiddenBlankPageCount: Int { blankPageIDs.count }
     var selectedPageID: UUID?
+    var selectedPage: StoredPage? { pages.first { $0.id == selectedPageID } }
     var pagesScanned = 0
     var lastOutputs: [URL] = []
     var lastOutputByteCount: Int64 = 0
@@ -57,6 +124,9 @@ final class ScannerWorkspaceViewModel {
     private let s300FirmwareStore: ScanSnapS300FirmwareStore
     private let automaticRefreshDelay: Duration
     private var automaticRefreshTask: Task<Void, Never>?
+    private var processingGeneration = 0
+    private var processingChain: Task<Void, Never>?
+    private var reprocessDebounce: Task<Void, Never>?
 
     convenience init() { self.init(discovery: CompositeScannerDiscovery(), registry: .live, outputWriter: ScanOutputWriter(), profileStore: ScanProfileStore(defaults: .standard)) }
 
@@ -144,7 +214,8 @@ final class ScannerWorkspaceViewModel {
         guard let selectedIdentity else { status = .error("Select a scanner before scanning."); return }
         guard let driver = registry.driver(for: selectedIdentity) else { status = .error("No driver is available for \(selectedIdentity.name). This device is discovered but unsupported."); return }
 
-        isScanning = true; isCancelRequested = false; pagesScanned = 0; lastOutputs = []; lastOutputByteCount = 0; pages = []; selectedPageID = nil; status = .scanning(progress: nil, pagesScanned: 0)
+        isScanning = true; isCancelRequested = false; pagesScanned = 0; lastOutputs = []; lastOutputByteCount = 0; status = .scanning(progress: nil, pagesScanned: 0)
+        resetPages()
         let store = ScanPageStore(); pageStore = store
         let transport: USBDeviceTransport? = selectedIdentity.connectionKind == .usb ? IOKitUSBDeviceTransport(identity: selectedIdentity) : nil
         let device = driver.makeDevice(identity: selectedIdentity, transport: transport); activeDevice = device
@@ -156,10 +227,11 @@ final class ScannerWorkspaceViewModel {
             if let transport { log("Opened USB pipes: \(await transport.endpointSummary).") }
             let stream = try await device.startScan(options: selectedProfile.options)
             for try await frame in stream {
-                let page = try await store.append(frame)
-                pages.append(page); pagesScanned = pages.count; selectedPageID = selectedPageID ?? page.id; status = .scanning(progress: nil, pagesScanned: pages.count)
+                try await ingest(frame)
+                status = .scanning(progress: nil, pagesScanned: rawPages.count)
             }
-            status = .idle; log("Received \(pages.count) page\(pages.count == 1 ? "" : "s").")
+            status = .idle; log("Received \(rawPages.count) page\(rawPages.count == 1 ? "" : "s").")
+            await waitForProcessing()
             if selectedProfile.options.export.automaticallySaveAfterScanning { await saveExport() }
         } catch {
             if isCancelRequested || error is CancellationError || (error as? ScannerError) == .scanCancelled { status = .idle; log("Scan cancelled; retained \(pages.count) partial page\(pages.count == 1 ? "" : "s") for review.") }
@@ -202,12 +274,13 @@ final class ScannerWorkspaceViewModel {
     }
 
     func saveExport() async {
-        guard !pages.isEmpty else { status = .error("There are no pages to export."); return }
+        await waitForProcessing()
+        guard !pages.isEmpty else { status = .error(rawPages.isEmpty ? "There are no pages to export." : "Every page was found blank; turn off blank-page removal to export them."); return }
         do { let result = try await outputWriter.write(pages: pages, options: selectedProfile.options, destinationFolder: destinationFolder); lastOutputs = result.outputURLs; lastOutputByteCount = result.outputByteCount; status = .idle; log("Exported \(result.pagesScanned) page\(result.pagesScanned == 1 ? "" : "s") (\(ByteCountFormatter.string(fromByteCount: result.outputByteCount, countStyle: .file))).") }
         catch { status = .error(error.localizedDescription); log("Export failed: \(error.localizedDescription)") }
     }
 
-    func clearPages() async { pages = []; selectedPageID = nil; lastOutputs = []; lastOutputByteCount = 0; await pageStore?.clear(); pageStore = nil; log("Cleared pages and output links.") }
+    func clearPages() async { resetPages(); lastOutputs = []; lastOutputByteCount = 0; await pageStore?.clear(); pageStore = nil; log("Cleared pages and output links.") }
     func revealInFinder() { guard let url = lastOutputs.first ?? (pages.first.map { $0.fileURL }) else { return }; NSWorkspace.shared.activateFileViewerSelecting([url]) }
     func openDestinationFolder() {
         do {
@@ -218,21 +291,141 @@ final class ScannerWorkspaceViewModel {
             log("Could not open destination: \(error.localizedDescription)")
         }
     }
-    func deleteSelectedPage() async { guard let id = selectedPageID, let index = pages.firstIndex(where: { $0.id == id }) else { return }; pages.remove(at: index); selectedPageID = pages.isEmpty ? nil : pages[min(index, pages.count - 1)].id; log("Deleted page.") }
-    func movePage(from source: IndexSet, to destination: Int) { pages.move(fromOffsets: source, toOffset: destination) }
+    func deleteSelectedPage() async {
+        guard let id = selectedPageID, let visibleIndex = pages.firstIndex(where: { $0.id == id }) else { return }
+        rawPages.removeAll { $0.id == id }; processedPages[id] = nil; pageEdits[id] = nil; blankPageIDs.remove(id)
+        selectedPageID = pages.isEmpty ? nil : pages[min(visibleIndex, pages.count - 1)].id
+        log("Deleted page.")
+    }
+    func movePage(from source: IndexSet, to destination: Int) { rawPages.move(fromOffsets: source, toOffset: destination) }
 
     func rotateSelectedPage() async {
-        guard let id = selectedPageID, let index = pages.firstIndex(where: { $0.id == id }), let store = pageStore else { return }
-        do {
-            let page = pages[index]; let frame = PageFrame(id: page.id, pageIndex: page.pageIndex, side: page.side, pixelFormat: page.pixelFormat, width: page.width, height: page.height, resolutionDPI: page.resolutionDPI, data: try Data(contentsOf: page.fileURL))
-            let settings = ImageProcessingSettings(rotation: .degrees90); guard let rotated = try ScanImageProcessor.process(frame, settings: settings, outputDPI: frame.resolutionDPI) else { return }
-            pages[index] = try await store.replace(page, with: rotated); log("Rotated page \(index + 1) by 90 degrees.")
-        } catch { log("Could not rotate page: \(error.localizedDescription)") }
+        guard let id = selectedPageID, let raw = rawPages.first(where: { $0.id == id }) else { return }
+        pageEdits[id, default: PageEdits()].quarterTurns += 1
+        log("Rotated page \(raw.pageIndex) by 90 degrees.")
+        processPage(raw)
+    }
+
+    /// Edit > Auto-Align Page: straightens the selected page and crops its
+    /// edges, whether or not the profile does so for every page.
+    func alignSelectedPage() async {
+        guard let id = selectedPageID, let raw = rawPages.first(where: { $0.id == id }) else { return }
+        if selectedProfile.options.processing.deskew { log("Page \(raw.pageIndex) is already aligned by the profile."); return }
+        pageEdits[id, default: PageEdits()].align = true
+        log("Aligned page \(raw.pageIndex).")
+        processPage(raw)
+    }
+
+    // MARK: - Processing pipeline
+
+    /// Stores a frame from the scanner as a raw page and queues its processing.
+    /// Exposed for tests; `startScan` feeds every received frame through it.
+    func ingest(_ frame: PageFrame) async throws {
+        let store: ScanPageStore
+        if let pageStore { store = pageStore } else { store = ScanPageStore(); pageStore = store }
+        let raw = try await store.appendRaw(frame)
+        rawPages.append(raw)
+        pagesScanned = rawPages.count
+        processPage(raw)
+    }
+
+    /// The profile's processing settings with the page's own edits on top.
+    func effectiveProcessingSettings(for pageID: UUID) -> ImageProcessingSettings {
+        var settings = selectedProfile.options.processing
+        let edits = pageEdits[pageID] ?? PageEdits()
+        let degrees = ((settings.rotation.rawValue + 90 * edits.quarterTurns) % 360 + 360) % 360
+        settings.rotation = PageRotation(rawValue: degrees) ?? .degrees0
+        if edits.align { settings.deskew = true }
+        return settings
+    }
+
+    /// Suspends until every queued page has been processed.
+    func waitForProcessing() async {
+        while let chain = processingChain, pendingProcessingCount > 0 {
+            await chain.value
+            if processingChain == chain { break }
+        }
+    }
+
+    private func resetPages() {
+        processingGeneration += 1
+        rawPages = []; processedPages = [:]; pageEdits = [:]; blankPageIDs = []; selectedPageID = nil; pagesScanned = 0
+    }
+
+    /// Re-renders every page after the processing options changed. Debounced,
+    /// because sliders and toggles fire in quick succession.
+    private func scheduleReprocessAll() {
+        reprocessDebounce?.cancel()
+        reprocessDebounce = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled, let self else { return }
+            self.processingGeneration += 1
+            for raw in self.rawPages { self.processPage(raw) }
+        }
+    }
+
+    /// Renders one raw page with the current settings on a background
+    /// thread, one page after another, and publishes the result unless the
+    /// settings changed again or the page was removed in the meantime.
+    private func processPage(_ raw: RawPage) {
+        guard let store = pageStore else { return }
+        let settings = effectiveProcessingSettings(for: raw.id)
+        let generation = processingGeneration
+        pendingProcessingCount += 1
+        let previous = processingChain
+        processingChain = Task { [weak self] in
+            await previous?.value
+            let outcome = await Task.detached(priority: .utility) { () -> Result<PageFrame?, Error> in
+                Result { try Self.render(raw, settings: settings) }
+            }.value
+            guard let self else { return }
+            self.pendingProcessingCount = max(0, self.pendingProcessingCount - 1)
+            guard generation == self.processingGeneration, self.rawPages.contains(where: { $0.id == raw.id }) else { return }
+            switch outcome {
+            case let .success(frame?):
+                do {
+                    self.processedPages[raw.id] = try await store.writeProcessed(frame)
+                    self.blankPageIDs.remove(raw.id)
+                } catch {
+                    self.log("Could not store page \(raw.pageIndex): \(error.localizedDescription)")
+                }
+            case .success(nil):
+                if self.blankPageIDs.insert(raw.id).inserted { self.log("Page \(raw.pageIndex) is blank and hidden.") }
+                self.processedPages[raw.id] = nil
+            case let .failure(error):
+                self.log("Could not process page \(raw.pageIndex): \(error.localizedDescription)")
+                // Keep the page visible rather than losing it.
+                if self.processedPages[raw.id] == nil, let frame = try? raw.frame(), let stored = try? await store.writeProcessed(frame) { self.processedPages[raw.id] = stored }
+            }
+            self.reconcileSelection()
+        }
+    }
+
+    nonisolated private static func render(_ raw: RawPage, settings: ImageProcessingSettings) throws -> PageFrame? {
+        let frame = try raw.frame()
+        return try ScanImageProcessor.process(frame, settings: settings, outputDPI: frame.resolutionDPI)
+    }
+
+    /// Keeps a page selected while pages appear and disappear.
+    private func reconcileSelection() {
+        let visible = pages
+        if let selectedPageID, visible.contains(where: { $0.id == selectedPageID }) { return }
+        selectedPageID = visible.first?.id
     }
 
     func copyActivityLog() { let pasteboard = NSPasteboard.general; pasteboard.clearContents(); pasteboard.setString(activityLog.reversed().joined(separator: "\n"), forType: .string); log("Activity log copied.") }
-    func updateProfile(_ profile: ScanProfile) { guard let index = profiles.firstIndex(where: { $0.id == profile.id }) else { return }; profiles[index] = profile; selectedProfile = profile; profileStore.selectedProfileID = profile.id; persistProfiles() }
-    func selectProfile(id: UUID) { guard let profile = profiles.first(where: { $0.id == id }) else { return }; selectedProfile = profile; profileStore.selectedProfileID = profile.id; persistProfiles() }
+    func updateProfile(_ profile: ScanProfile) {
+        guard let index = profiles.firstIndex(where: { $0.id == profile.id }) else { return }
+        let processingChanged = profile.options.processing != selectedProfile.options.processing || profile.id != selectedProfile.id
+        profiles[index] = profile; selectedProfile = profile; profileStore.selectedProfileID = profile.id; persistProfiles()
+        if processingChanged, !rawPages.isEmpty { scheduleReprocessAll() }
+    }
+    func selectProfile(id: UUID) {
+        guard let profile = profiles.first(where: { $0.id == id }) else { return }
+        let processingChanged = profile.options.processing != selectedProfile.options.processing
+        selectedProfile = profile; profileStore.selectedProfileID = profile.id; persistProfiles()
+        if processingChanged, !rawPages.isEmpty { scheduleReprocessAll() }
+    }
     func duplicateSelectedProfile() { var copy = selectedProfile; copy.name += " Copy"; copy = ScanProfile(name: copy.name, options: copy.options); profiles.append(copy); selectedProfile = copy; profileStore.selectedProfileID = copy.id; persistProfiles() }
     func profileBinding() -> Binding<ScanProfile> { Binding(get: { self.selectedProfile }, set: { self.updateProfile($0) }) }
     func isSupported(_ source: ScanSource) -> Bool {
