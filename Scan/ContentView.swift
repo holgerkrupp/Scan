@@ -124,6 +124,23 @@ struct ContentView: View {
                 Toggle("Automatically save after scanning", isOn: profile(\.options.export.automaticallySaveAfterScanning))
             }
             Section("Processing") {
+                VStack(alignment: .leading, spacing: 5) {
+                    LabeledContent("Paper cleanup") {
+                        Text(paperCleanupLabel)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                    Slider(value: profile(\.options.processing.paperCleanup), in: 0...1, step: 0.05) {
+                        Text("Paper cleanup")
+                    } minimumValueLabel: {
+                        Text("Off")
+                    } maximumValueLabel: {
+                        Text("Strong")
+                    }
+                    Text("Increase to suppress faint shadows from creases and paper texture; reduce it to retain light pencil marks and subtle details.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 capabilityToggle("Remove blank pages", value: profile(\.options.processing.removeBlankPages), supported: viewModel.capabilities?.supportsBlankPageRemoval ?? false, reason: "The selected backend does not expose blank-page processing.")
                 capabilityToggle("Auto-crop", value: profile(\.options.processing.autoCrop), supported: viewModel.capabilities?.supportsAutoCrop ?? false, reason: "Software crop is unavailable for this backend.")
                 capabilityToggle("Deskew", value: profile(\.options.processing.deskew), supported: viewModel.capabilities?.supportsDeskew ?? false, reason: "Software deskew is unavailable for this backend.")
@@ -147,6 +164,10 @@ struct ContentView: View {
     private func profile<T>(_ keyPath: WritableKeyPath<ScanProfile, T>) -> Binding<T> { Binding(get: { viewModel.selectedProfile[keyPath: keyPath] }, set: { var p = viewModel.selectedProfile; p[keyPath: keyPath] = $0; viewModel.updateProfile(p) }) }
     private func profileString(_ keyPath: WritableKeyPath<ScanProfile, String>) -> Binding<String> { profile(keyPath) }
     private func capabilityToggle(_ title: String, value: Binding<Bool>, supported: Bool, reason: String) -> some View { Toggle(title, isOn: value).disabled(!supported).help(supported ? "" : reason) }
+    private var paperCleanupLabel: String {
+        let amount = viewModel.selectedProfile.options.processing.paperCleanup
+        return amount == 0 ? "Off" : "\(Int((amount * 100).rounded()))%"
+    }
     private var statusColor: Color { switch viewModel.status { case .error: .red; case .scanning: .accentColor; case .idle: .green; case .disconnected: .secondary } }
 }
 

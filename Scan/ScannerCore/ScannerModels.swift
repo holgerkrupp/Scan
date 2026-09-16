@@ -83,7 +83,46 @@ struct AcquisitionSettings: Hashable, Sendable, Codable {
     }
 }
 struct ImageProcessingSettings: Hashable, Sendable, Codable {
-    var removeBlankPages = false; var autoCrop = false; var deskew = false; var autoRotate = false; var rotation: PageRotation = .degrees0
+    var removeBlankPages: Bool
+    var autoCrop: Bool
+    var deskew: Bool
+    var autoRotate: Bool
+    var rotation: PageRotation
+    /// Raises near-white page tones toward white. Zero preserves the scanner's
+    /// original tonal range; one provides the strongest paper-shadow cleanup.
+    var paperCleanup: Double
+
+    init(
+        removeBlankPages: Bool = false,
+        autoCrop: Bool = false,
+        deskew: Bool = false,
+        autoRotate: Bool = false,
+        rotation: PageRotation = .degrees0,
+        paperCleanup: Double = 0
+    ) {
+        self.removeBlankPages = removeBlankPages
+        self.autoCrop = autoCrop
+        self.deskew = deskew
+        self.autoRotate = autoRotate
+        self.rotation = rotation
+        self.paperCleanup = paperCleanup
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case removeBlankPages, autoCrop, deskew, autoRotate, rotation, paperCleanup
+    }
+
+    // Keep profiles written before paper cleanup was introduced readable and
+    // visually unchanged until the user opts into the adjustment.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        removeBlankPages = try container.decodeIfPresent(Bool.self, forKey: .removeBlankPages) ?? false
+        autoCrop = try container.decodeIfPresent(Bool.self, forKey: .autoCrop) ?? false
+        deskew = try container.decodeIfPresent(Bool.self, forKey: .deskew) ?? false
+        autoRotate = try container.decodeIfPresent(Bool.self, forKey: .autoRotate) ?? false
+        rotation = try container.decodeIfPresent(PageRotation.self, forKey: .rotation) ?? .degrees0
+        paperCleanup = try container.decodeIfPresent(Double.self, forKey: .paperCleanup) ?? 0
+    }
 }
 struct ExportSettings: Hashable, Sendable, Codable {
     var outputFormat: ScanOutputFormat = .pdf

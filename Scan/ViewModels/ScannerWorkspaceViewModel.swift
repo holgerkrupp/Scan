@@ -112,7 +112,13 @@ final class ScannerWorkspaceViewModel {
 
     func chooseDestination() {
         let panel = NSOpenPanel(); panel.canChooseFiles = false; panel.canChooseDirectories = true; panel.allowsMultipleSelection = false; panel.prompt = "Use Folder"; panel.directoryURL = destinationFolder
-        if panel.runModal() == .OK, let url = panel.url { destinationFolder = url; _ = url.startAccessingSecurityScopedResource(); log("Destination set to \(url.path).") }
+        panel.title = "Choose Default Saving Location"
+        panel.message = "Scans will be saved to this folder by default."
+        if panel.runModal() == .OK, let url = panel.url {
+            _ = url.startAccessingSecurityScopedResource()
+            destinationFolder = url
+            log("Destination set to \(url.path).")
+        }
     }
 
     func chooseS300Firmware() {
@@ -203,6 +209,15 @@ final class ScannerWorkspaceViewModel {
 
     func clearPages() async { pages = []; selectedPageID = nil; lastOutputs = []; lastOutputByteCount = 0; await pageStore?.clear(); pageStore = nil; log("Cleared pages and output links.") }
     func revealInFinder() { guard let url = lastOutputs.first ?? (pages.first.map { $0.fileURL }) else { return }; NSWorkspace.shared.activateFileViewerSelecting([url]) }
+    func openDestinationFolder() {
+        do {
+            try FileManager.default.createDirectory(at: destinationFolder, withIntermediateDirectories: true)
+            NSWorkspace.shared.open(destinationFolder)
+        } catch {
+            status = .error("Could not open the saving location: \(error.localizedDescription)")
+            log("Could not open destination: \(error.localizedDescription)")
+        }
+    }
     func deleteSelectedPage() async { guard let id = selectedPageID, let index = pages.firstIndex(where: { $0.id == id }) else { return }; pages.remove(at: index); selectedPageID = pages.isEmpty ? nil : pages[min(index, pages.count - 1)].id; log("Deleted page.") }
     func movePage(from source: IndexSet, to destination: Int) { pages.move(fromOffsets: source, toOffset: destination) }
 

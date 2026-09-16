@@ -19,6 +19,7 @@ enum ScanImageProcessor {
         if settings.deskew { rendered = deskew(rendered) ?? rendered }
         if settings.autoRotate && rendered.width > rendered.height { rendered = rotate(rendered, degrees: 90) ?? rendered }
         if settings.rotation != .degrees0 { rendered = rotate(rendered, degrees: settings.rotation.rawValue) ?? rendered }
+        if settings.paperCleanup > 0 { rendered = applyPaperCleanup(rendered, amount: settings.paperCleanup) ?? rendered }
         let dpi = max(outputDPI, 1)
         let requestedScale = CGFloat(dpi) / CGFloat(max(frame.resolutionDPI, 1))
         let metadataCorrection = CGFloat(max(frame.width, 1)) / CGFloat(max(rendered.width, 1))
@@ -91,6 +92,38 @@ enum ScanImageProcessor {
         guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
         switch normalized { case 90: context.translateBy(x: CGFloat(width), y: 0); context.rotate(by: .pi / 2); case 180: context.translateBy(x: CGFloat(width), y: CGFloat(height)); context.rotate(by: .pi); case 270: context.translateBy(x: 0, y: CGFloat(height)); context.rotate(by: -.pi / 2); default: break }
         context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height)); return context.makeImage()
+    }
+
+    /// Suppresses faint paper shadows by moving the white point down by up to
+    /// 12 percent. This keeps black anchored at black while clipped highlights
+    /// make shallow folds and page texture less visible.
+    static func applyPaperCleanup(_ image: CGImage, amount: Double) -> CGImage? {
+        let strength = min(max(amount, 0), 1)
+        guard strength > 0 else { return image }
+        let bytesPerRow = image.width * 4
+        guard let context = CGContext(
+            data: nil,
+            width: image.width,
+            height: image.height,
+            bitsPerComponent: 8,
+            bytesPerRow: bytesPerRow,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        guard let data = context.data else { return nil }
+        let pixels = data.bindMemory(to: UInt8.self, capacity: bytesPerRow * image.height)
+        let gain = 1 / (1 - 0.12 * strength)
+        for row in 0..<image.height {
+            let rowStart = row * bytesPerRow
+            for column in 0..<image.width {
+                let offset = rowStart + column * 4
+                pixels[offset] = UInt8(min(255, (Double(pixels[offset]) * gain).rounded()))
+                pixels[offset + 1] = UInt8(min(255, (Double(pixels[offset + 1]) * gain).rounded()))
+                pixels[offset + 2] = UInt8(min(255, (Double(pixels[offset + 2]) * gain).rounded()))
+            }
+        }
+        return context.makeImage()
     }
 
     private static func resize(_ image: CGImage, scale: CGFloat) -> CGImage? {

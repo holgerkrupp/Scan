@@ -79,6 +79,8 @@ The image `READ` size comes from the profile (`transferChunkSize`): 32 KiB for t
 
 The downloadable gamma table (`FujitsuGammaTable`, SEND type 0x83) is built like SANE's `send_lut()` with default brightness/contrast: a straight line from `1 << lookupTableInputBits` inputs onto 8-bit output. The S1500 profile keeps its 1024-entry table (pinned byte for byte by a test); the iX500 profile uses the 256-entry table SANE sends for it (`adbits = 8`). Neither table brightens the page: the iX500 delivers paper at roughly 245 of 255 in both the raw and the JPEG path, so any background whitening belongs in the image pipeline, not the driver.
 
+`ImageProcessingSettings.paperCleanup` provides that background whitening as a per-profile, backend-independent adjustment. It lowers the effective white point by up to 12 percent so faint crease shadows and paper texture clip toward white while black remains anchored. Zero is neutral and is also the migration value for profiles saved before the setting existed.
+
 "Image data ready" polling (read-image-count and the duplex idle loops) runs at 100 ms with a 60 s budget; with scanner buffering the next sheet is usually ready after a single poll.
 
 The command engine never makes output-format compression decisions beyond that pass-through. Cancellation sets a terminal cancellation flag before aborting transfers, so a late transport error cannot replace cancellation with a generic failure. Partial pages remain in the review workspace.

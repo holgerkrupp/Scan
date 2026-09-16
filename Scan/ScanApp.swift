@@ -5,6 +5,7 @@
 //  Created by Holger Krupp on 05.06.26.
 //
 
+import AppKit
 import SwiftUI
 
 @main
@@ -48,6 +49,21 @@ struct ScanApp: App {
                     workspace.revealInFinder()
                 }
                 .disabled(workspace.lastOutputs.isEmpty)
+
+                Button("Clear Scanned Pages") {
+                    Task { await workspace.clearPages() }
+                }
+                .disabled(workspace.pages.isEmpty && workspace.lastOutputs.isEmpty)
+
+                Divider()
+
+                Button("Choose Default Saving Location…") {
+                    workspace.chooseDestination()
+                }
+
+                Button("Show Default Saving Location in Finder") {
+                    workspace.openDestinationFolder()
+                }
             }
 
             // Scan has no document model, printing, import/export, or undo
@@ -58,7 +74,19 @@ struct ScanApp: App {
             CommandGroup(replacing: .printItem) { }
             CommandGroup(replacing: .undoRedo) { }
             CommandGroup(replacing: .toolbar) { }
-            CommandGroup(replacing: .help) { }
+            CommandGroup(replacing: .help) {
+                Button("Scan Source Code on GitHub") {
+                    NSWorkspace.shared.open(ScanProjectLinks.sourceCode)
+                }
+
+                Button("Report an Issue…") {
+                    NSWorkspace.shared.open(ScanProjectLinks.issueReporter)
+                }
+            }
+        }
+
+        Settings {
+            ScanSettingsView(viewModel: workspace)
         }
     }
 }

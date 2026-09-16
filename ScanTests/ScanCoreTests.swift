@@ -48,8 +48,8 @@ final class ScanCoreTests: XCTestCase {
 
     func testProfilePersistenceRoundTrip() {
         let defaults = UserDefaults(suiteName: "ScanCoreTests-\(UUID().uuidString)")!
-        var store = ScanProfileStore(defaults: defaults); var profile = ScanProfile.defaults[0]; profile.name = "Test profile"; store.save([profile]); store.selectedProfileID = profile.id
-        XCTAssertEqual(store.load().first?.name, "Test profile"); XCTAssertEqual(store.selectedProfileID, profile.id)
+        var store = ScanProfileStore(defaults: defaults); var profile = ScanProfile.defaults[0]; profile.name = "Test profile"; profile.options.processing.paperCleanup = 0.65; store.save([profile]); store.selectedProfileID = profile.id
+        XCTAssertEqual(store.load().first?.name, "Test profile"); XCTAssertEqual(store.load().first?.options.processing.paperCleanup, 0.65); XCTAssertEqual(store.selectedProfileID, profile.id)
     }
 
     func testBlankPageDetectionAndJPEGDownsampling() throws {
@@ -60,6 +60,21 @@ final class ScanCoreTests: XCTestCase {
         XCTAssertFalse(ScanImageProcessor.isBlank(image))
         let settings = ImageProcessingSettings(); let downsampled = try XCTUnwrap(ScanImageProcessor.process(printed, settings: settings, outputDPI: 150))
         XCTAssertEqual(downsampled.width, 300); XCTAssertEqual(downsampled.height, 400); XCTAssertEqual(downsampled.resolutionDPI, 150)
+    }
+
+    func testPaperCleanupSuppressesNearWhiteShadowsWithoutLiftingBlack() throws {
+        let source = try makeTwoToneImage(light: 230, dark: 0)
+        let cleaned = try XCTUnwrap(ScanImageProcessor.applyPaperCleanup(source, amount: 1))
+        let pixels = try rgbaPixels(from: cleaned)
+        XCTAssertGreaterThanOrEqual(pixels[0], 250)
+        XCTAssertEqual(pixels[4], 0)
+    }
+
+    func testLegacyProcessingSettingsDecodeWithPaperCleanupOff() throws {
+        let json = Data(#"{"removeBlankPages":true,"autoCrop":true,"deskew":false,"autoRotate":false,"rotation":0}"#.utf8)
+        let settings = try JSONDecoder().decode(ImageProcessingSettings.self, from: json)
+        XCTAssertTrue(settings.removeBlankPages)
+        XCTAssertEqual(settings.paperCleanup, 0)
     }
 
     func testPDFPageCountBlankRemovalAndUniqueFilenames() async throws {
@@ -219,6 +234,20 @@ final class ScanCoreTests: XCTestCase {
 
     private func makeFrame(pageIndex: Int, blank: Bool, width: Int = 300, height: Int = 400) throws -> PageFrame {
         let image = NSImage(size: NSSize(width: width, height: height)); image.lockFocus(); NSColor.white.setFill(); NSRect(x: 0, y: 0, width: width, height: height).fill(); if !blank { NSColor.black.setFill(); NSRect(x: 30, y: 40, width: width - 60, height: 20).fill() }; image.unlockFocus(); let tiff = try XCTUnwrap(image.tiffRepresentation); let rep = try XCTUnwrap(NSBitmapImageRep(data: tiff)); let data = try XCTUnwrap(rep.representation(using: .jpeg, properties: [.compressionFactor: 0.9])); return PageFrame(pageIndex: pageIndex, side: .front, pixelFormat: .jpeg, width: width, height: height, resolutionDPI: 300, data: data)
+    }
+
+    private func makeTwoToneImage(light: UInt8, dark: UInt8) throws -> CGImage {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let data = Data([light, light, light, 255, dark, dark, dark, 255])
+        let provider = try XCTUnwrap(CGDataProvider(data: data as CFData))
+        return try XCTUnwrap(CGImage(width: 2, height: 1, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: 8, space: colorSpace, bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue), provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent))
+    }
+
+    private func rgbaPixels(from image: CGImage) throws -> [UInt8] {
+        var pixels = [UInt8](repeating: 0, count: image.width * image.height * 4)
+        let context = try XCTUnwrap(CGContext(data: &pixels, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return pixels
     }
 }
 
