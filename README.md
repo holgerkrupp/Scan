@@ -19,8 +19,17 @@ the resulting files to the next shortcut action. Its destination is the folder
 selected in Scan, so select that folder once in the app before automating scans.
 
 The same actions are also available from the app's **Scan** menu: Scan Document
-(Command-Return), Export Pages (Command-Shift-E), and Refresh Scanners
-(Command-Shift-R).
+(Command-Return), Quick Look Selected Page (Command-Y), Export Pages
+(Command-Shift-E), and Refresh Scanners (Command-Shift-R).
+
+## Reviewing pages
+
+The page grid behaves like the Finder's icon view. Click a page to select it
+and give the grid keyboard focus (Tab also reaches it when keyboard navigation
+is enabled in System Settings); the arrow keys, Home and End then move the
+selection, Space opens the selected page in Quick Look, and a click on empty
+space clears the selection. The slider next to "Reveal in Finder" sets the
+thumbnail size.
 
 ## Native USB support
 

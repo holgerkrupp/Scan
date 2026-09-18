@@ -10,9 +10,23 @@ actor ScanPageStore {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     }
     func append(_ frame: PageFrame) throws -> StoredPage {
-        let url = folder.appendingPathComponent("\(frame.id.uuidString).page")
+        // Named and typed like a document so Quick Look shows a readable title
+        // and picks the image previewer.
+        let name = "Page \(frame.pageIndex)\(frame.side == .unknown ? "" : " \(frame.side.rawValue)")"
+        var url = folder.appendingPathComponent(name).appendingPathExtension(Self.fileExtension(for: frame.pixelFormat))
+        if FileManager.default.fileExists(atPath: url.path) {
+            url = folder.appendingPathComponent("\(name) \(frame.id.uuidString)").appendingPathExtension(Self.fileExtension(for: frame.pixelFormat))
+        }
         try frame.data.write(to: url, options: .atomic)
         return StoredPage(frame: frame, fileURL: url)
+    }
+    static func fileExtension(for format: PagePixelFormat) -> String {
+        switch format {
+        case .jpeg: "jpg"
+        case .png: "png"
+        case .tiff: "tiff"
+        case .rgb8, .gray8, .unknown: "page"
+        }
     }
     func replace(_ page: StoredPage, with frame: PageFrame) throws -> StoredPage {
         try frame.data.write(to: page.fileURL, options: .atomic)
@@ -37,6 +51,9 @@ final class ScannerWorkspaceViewModel {
     var status: ScannerStatus = .disconnected
     var pages: [StoredPage] = []
     var selectedPageID: UUID?
+    /// Columns the page grid currently shows; the view keeps it current so
+    /// keyboard navigation (also from the Quick Look panel) can move vertically.
+    var gridColumns = 1
     var pagesScanned = 0
     var lastOutputs: [URL] = []
     var lastOutputByteCount: Int64 = 0
@@ -218,6 +235,19 @@ final class ScannerWorkspaceViewModel {
             log("Could not open destination: \(error.localizedDescription)")
         }
     }
+    var selectedPage: StoredPage? { pages.first { $0.id == selectedPageID } }
+
+    /// Opens or closes the Quick Look panel (Space or Command-Y). Like the
+    /// Finder's, the panel previews whatever is selected and follows the selection.
+    func toggleQuickLook() { PageQuickLookController.shared.toggle() }
+
+    /// Moves the selection with the keyboard; `columns` is the grid's current column count.
+    func selectPage(moving move: PageGridNavigation.Move, columns: Int) {
+        let current = pages.firstIndex { $0.id == selectedPageID }
+        guard let index = PageGridNavigation.index(after: current, move: move, count: pages.count, columns: columns) else { return }
+        selectedPageID = pages[index].id
+    }
+
     func deleteSelectedPage() async { guard let id = selectedPageID, let index = pages.firstIndex(where: { $0.id == id }) else { return }; pages.remove(at: index); selectedPageID = pages.isEmpty ? nil : pages[min(index, pages.count - 1)].id; log("Deleted page.") }
     func movePage(from source: IndexSet, to destination: Int) { pages.move(fromOffsets: source, toOffset: destination) }
 
