@@ -41,25 +41,17 @@ actor ScanPageStore {
         folder = FileManager.default.temporaryDirectory.appendingPathComponent("Scan-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     }
-
-    func appendRaw(_ frame: PageFrame) throws -> RawPage {
-        let url = folder.appendingPathComponent("Raw \(Self.baseName(for: frame))").appendingPathExtension(Self.fileExtension(for: frame.pixelFormat))
-        try frame.data.write(to: url, options: .atomic)
-        return RawPage(frame: frame, fileURL: url)
-    }
-
-    /// Writes the processed rendition of a raw page. Named and typed like a
-    /// document so Quick Look shows a readable title and picks the image previewer.
-    func writeProcessed(_ frame: PageFrame) throws -> StoredPage {
-        let url = folder.appendingPathComponent("Page \(Self.baseName(for: frame))").appendingPathExtension(Self.fileExtension(for: frame.pixelFormat))
+    func append(_ frame: PageFrame) throws -> StoredPage {
+        // Named and typed like a document so Quick Look shows a readable title
+        // and picks the image previewer.
+        let name = "Page \(frame.pageIndex)\(frame.side == .unknown ? "" : " \(frame.side.rawValue)")"
+        var url = folder.appendingPathComponent(name).appendingPathExtension(Self.fileExtension(for: frame.pixelFormat))
+        if FileManager.default.fileExists(atPath: url.path) {
+            url = folder.appendingPathComponent("\(name) \(frame.id.uuidString)").appendingPathExtension(Self.fileExtension(for: frame.pixelFormat))
+        }
         try frame.data.write(to: url, options: .atomic)
         return StoredPage(frame: frame, fileURL: url)
     }
-
-    private static func baseName(for frame: PageFrame) -> String {
-        "\(frame.pageIndex)\(frame.side == .unknown ? "" : " \(frame.side.rawValue)") \(frame.id.uuidString.prefix(8))"
-    }
-
     static func fileExtension(for format: PagePixelFormat) -> String {
         switch format {
         case .jpeg: "jpg"
@@ -67,6 +59,10 @@ actor ScanPageStore {
         case .tiff: "tiff"
         case .rgb8, .gray8, .unknown: "page"
         }
+    }
+    func replace(_ page: StoredPage, with frame: PageFrame) throws -> StoredPage {
+        try frame.data.write(to: page.fileURL, options: .atomic)
+        return StoredPage(frame: frame, fileURL: page.fileURL)
     }
 
     func clear() { try? FileManager.default.removeItem(at: folder) }
@@ -103,7 +99,9 @@ final class ScannerWorkspaceViewModel {
     var pages: [StoredPage] { rawPages.compactMap { processedPages[$0.id] } }
     var hiddenBlankPageCount: Int { blankPageIDs.count }
     var selectedPageID: UUID?
-    var selectedPage: StoredPage? { pages.first { $0.id == selectedPageID } }
+    /// Columns the page grid currently shows; the view keeps it current so
+    /// keyboard navigation (also from the Quick Look panel) can move vertically.
+    var gridColumns = 1
     var pagesScanned = 0
     var lastOutputs: [URL] = []
     var lastOutputByteCount: Int64 = 0
@@ -291,13 +289,21 @@ final class ScannerWorkspaceViewModel {
             log("Could not open destination: \(error.localizedDescription)")
         }
     }
-    func deleteSelectedPage() async {
-        guard let id = selectedPageID, let visibleIndex = pages.firstIndex(where: { $0.id == id }) else { return }
-        rawPages.removeAll { $0.id == id }; processedPages[id] = nil; pageEdits[id] = nil; blankPageIDs.remove(id)
-        selectedPageID = pages.isEmpty ? nil : pages[min(visibleIndex, pages.count - 1)].id
-        log("Deleted page.")
+    var selectedPage: StoredPage? { pages.first { $0.id == selectedPageID } }
+
+    /// Opens or closes the Quick Look panel (Space or Command-Y). Like the
+    /// Finder's, the panel previews whatever is selected and follows the selection.
+    func toggleQuickLook() { PageQuickLookController.shared.toggle() }
+
+    /// Moves the selection with the keyboard; `columns` is the grid's current column count.
+    func selectPage(moving move: PageGridNavigation.Move, columns: Int) {
+        let current = pages.firstIndex { $0.id == selectedPageID }
+        guard let index = PageGridNavigation.index(after: current, move: move, count: pages.count, columns: columns) else { return }
+        selectedPageID = pages[index].id
     }
-    func movePage(from source: IndexSet, to destination: Int) { rawPages.move(fromOffsets: source, toOffset: destination) }
+
+    func deleteSelectedPage() async { guard let id = selectedPageID, let index = pages.firstIndex(where: { $0.id == id }) else { return }; pages.remove(at: index); selectedPageID = pages.isEmpty ? nil : pages[min(index, pages.count - 1)].id; log("Deleted page.") }
+    func movePage(from source: IndexSet, to destination: Int) { pages.move(fromOffsets: source, toOffset: destination) }
 
     func rotateSelectedPage() async {
         guard let id = selectedPageID, let raw = rawPages.first(where: { $0.id == id }) else { return }

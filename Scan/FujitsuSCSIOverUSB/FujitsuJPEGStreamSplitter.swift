@@ -14,6 +14,11 @@ import Foundation
 /// - If the frame width in SOF equals the requested width the stream is not
 ///   interlaced: it is a plain front-side JPEG and the back side has to be read
 ///   from the back window separately.
+/// - Some models (the iX1600) write the requested window height into SOF and
+///   simply stop the entropy data after the last real row once automatic
+///   length detection ends the page. With a restart interval defined, the
+///   number of restart intervals gives the number of MCU rows actually sent,
+///   so the SOF height is corrected to that at EOI.
 final class FujitsuJPEGStreamSplitter {
     enum Stage {
         case none, soi, head, sof, sos, front, back, eoi
@@ -33,12 +38,22 @@ final class FujitsuJPEGStreamSplitter {
     private(set) var frameHeight = 0
     private(set) var hasReachedEndOfImage = false
 
+    /// Restart interval from DRI in MCUs, 0 when the stream has none.
+    private(set) var restartInterval = 0
+
     private var stage: Stage = .none
     private var ffOffset = -1
     private var xByte: UInt8 = 0
     private var yByte: UInt8 = 0
     private var frontRestartCount = 0
     private var backRestartCount = 0
+    private var currentMarker: UInt8 = 0
+    private var componentCount = 0
+    private var maxHorizontalSampling = 1
+    private var maxVerticalSampling = 1
+    /// Index of the SOF height's high byte in `front` / `back`.
+    private var frontHeightOffset = -1
+    private var backHeightOffset = -1
 
     init(requestedWidth: Int, resolutionDPI: Int, duplex: Bool) {
         self.requestedWidth = requestedWidth
@@ -65,6 +80,7 @@ final class FujitsuJPEGStreamSplitter {
 
             // Last byte was 0xff, this one is a marker code (or a stuffed 0x00).
             if ffOffset == 0 {
+                currentMarker = byte
                 if stage == .soi && byte != 0xe0 {
                     appendJFIFHeader(to: &front)
                     if isInterlaced {
@@ -85,6 +101,7 @@ final class FujitsuJPEGStreamSplitter {
                     stage = .sos
                 case 0xd0...0xd7 where !isInterlaced:
                     stage = .front
+                    frontRestartCount += 1
                 case 0xd0, 0xd2, 0xd4, 0xd6:
                     stage = .back
                     if backRestartCount == 0 {
@@ -107,12 +124,31 @@ final class FujitsuJPEGStreamSplitter {
             }
             ffOffset += 1
 
+            if stage == .head && currentMarker == 0xdd {
+                // DRI: length (2 bytes) then the restart interval in MCUs.
+                if ffOffset == 4 {
+                    restartInterval = Int(byte) << 8
+                } else if ffOffset == 5 {
+                    restartInterval |= Int(byte)
+                }
+            }
+
             if stage == .sof {
                 switch ffOffset {
                 case 5:
                     yByte = byte
                 case 6:
                     frameHeight = Int(yByte) << 8 | Int(byte)
+                case 9:
+                    componentCount = Int(byte)
+                    maxHorizontalSampling = 1
+                    maxVerticalSampling = 1
+                case 11...:
+                    // Component descriptors: id, sampling factors (h << 4 | v), table.
+                    if componentCount > 0, (ffOffset - 11) % 3 == 0, (ffOffset - 11) / 3 < componentCount {
+                        maxHorizontalSampling = max(maxHorizontalSampling, Int(byte >> 4))
+                        maxVerticalSampling = max(maxVerticalSampling, Int(byte & 0x0f))
+                    }
                 case 7:
                     // High byte of the frame width; emitted once the width is known.
                     xByte = byte
@@ -143,12 +179,18 @@ final class FujitsuJPEGStreamSplitter {
                     front.append(0xff)
                 }
                 front.append(byte)
+                if stage == .sof && ffOffset == 5 {
+                    frontHeightOffset = front.count - 1
+                }
             }
             if isInterlaced && [.soi, .head, .sof, .sos, .eoi, .back].contains(stage) {
                 if ffOffset == 1 {
                     back.append(0xff)
                 }
                 back.append(byte)
+                if stage == .sof && ffOffset == 5 {
+                    backHeightOffset = back.count - 1
+                }
             }
 
             // Last byte of a three-component SOS segment; entropy data follows.
@@ -157,6 +199,38 @@ final class FujitsuJPEGStreamSplitter {
             }
             if stage == .eoi {
                 hasReachedEndOfImage = true
+                correctFrameHeight()
+            }
+        }
+    }
+
+    /// Rows actually delivered for `intervals` restart intervals, rounded up
+    /// to whole MCU rows.
+    private func deliveredRows(intervals: Int) -> Int {
+        let mcuWidth = 8 * maxHorizontalSampling
+        let mcuHeight = 8 * maxVerticalSampling
+        let mcusPerRow = max(1, (frameWidth + mcuWidth - 1) / mcuWidth)
+        let mcus = intervals * restartInterval
+        return (mcus + mcusPerRow - 1) / mcusPerRow * mcuHeight
+    }
+
+    /// Shrinks the SOF height to the rows the scanner actually sent when it
+    /// wrote the window height into SOF and ended the data early.
+    private func correctFrameHeight() {
+        guard restartInterval > 0, frameWidth > 0, frameHeight > 0 else { return }
+        let declaredHeight = frameHeight
+        // The first interval of each side starts without a marker.
+        let frontRows = deliveredRows(intervals: frontRestartCount + 1)
+        if frontRows < declaredHeight, frontHeightOffset >= 0, frontHeightOffset + 1 < front.count {
+            front[frontHeightOffset] = UInt8(truncatingIfNeeded: frontRows >> 8)
+            front[frontHeightOffset + 1] = UInt8(truncatingIfNeeded: frontRows)
+            frameHeight = frontRows
+        }
+        if isInterlaced {
+            let backRows = deliveredRows(intervals: backRestartCount)
+            if backRows < declaredHeight, backHeightOffset >= 0, backHeightOffset + 1 < back.count {
+                back[backHeightOffset] = UInt8(truncatingIfNeeded: backRows >> 8)
+                back[backHeightOffset + 1] = UInt8(truncatingIfNeeded: backRows)
             }
         }
     }

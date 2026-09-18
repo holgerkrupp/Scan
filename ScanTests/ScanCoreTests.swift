@@ -144,12 +144,16 @@ final class ScanCoreTests: XCTestCase {
         XCTAssertEqual(device.capabilities.resolutionsDPI, [150, 200, 300, 600])
         XCTAssertTrue(device.capabilities.supportsDuplex)
 
-        // The iX1500 has a separate protocol-backed profile so it cannot pick
+        // The iX1500 and iX1600 share their own profile so they cannot pick
         // up the iX500-only command quirks by accident.
         let ix1500 = ScannerIdentity(name: "ScanSnap iX1500", manufacturer: "Fujitsu", model: "iX1500", serialNumber: nil, connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x159f), locationID: 2)
         XCTAssertFalse(legacyDriver.canDrive(ix1500))
         XCTAssertTrue(ScannerDriverRegistry.live.driver(for: ix1500) is FujitsuScanSnapIX1500Driver)
-        XCTAssertEqual(FujitsuScanSnapIX1500Driver().makeDevice(identity: ix1500, transport: nil).capabilities.resolutionsDPI, [150, 200, 300, 600])
+        XCTAssertEqual(FujitsuScanSnapIX1500Driver().makeDevice(identity: ix1500, transport: nil).capabilities.resolutionsDPI, [150, 200, 300, 400, 600])
+        let ix1600 = ScannerIdentity(name: "ScanSnap iX1600", manufacturer: "Fujitsu", model: "iX1600", serialNumber: nil, connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x1632), locationID: 3)
+        XCTAssertFalse(legacyDriver.canDrive(ix1600))
+        XCTAssertTrue(ScannerDriverRegistry.live.driver(for: ix1600) is FujitsuScanSnapIX1600Driver)
+        XCTAssertEqual(FujitsuScanSnapIX1600Driver().makeDevice(identity: ix1600, transport: nil).capabilities, FujitsuScanSnapIX1500Driver().makeDevice(identity: ix1500, transport: nil).capabilities)
     }
 
     func testS300DriverClaimsOnlyTheDirectUSBModels() {
