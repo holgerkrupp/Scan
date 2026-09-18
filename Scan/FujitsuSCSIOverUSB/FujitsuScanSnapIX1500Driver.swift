@@ -3,10 +3,11 @@ import Foundation
 /// Native SCSI-over-USB driver for the Fujitsu ScanSnap iX1500
 /// (USB 0x04c5/0x159f).
 ///
-/// SANE's `fujitsu` backend uses the generic Fujitsu command flow for this
-/// model. This profile is therefore protocol-backed and intentionally does not
-/// enable the iX500-specific pre-read, JPEG-table, hopper, buffering, or
-/// hardware-compression behavior until it has been validated on hardware.
+/// The iX1500 shares its generation, paper path and Fujitsu SCSI dialect
+/// with the iX1600, so it uses the same profile
+/// (`FujitsuScanSnapModelProfile.ix1500` mirrors `.ix1600`). The iX1600
+/// command flow was exercised on hardware; the iX1500 has not been tested
+/// yet, so treat it as preliminary support.
 struct FujitsuScanSnapIX1500Driver: ScannerDriver {
     private let profile = FujitsuScanSnapModelProfile.ix1500
 

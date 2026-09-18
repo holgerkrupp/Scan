@@ -101,6 +101,54 @@ final class FujitsuJPEGStreamSplitterTests: XCTestCase {
         XCTAssertEqual([UInt8](splitter.front), soi + jfif(dpi: 300) + sof(width: 16) + sos + scan + eoi)
     }
 
+    /// The iX1600 writes the window height into SOF and ends the entropy data
+    /// after the last real row; the restart intervals reveal the true height.
+    func testFrameHeightIsCorrectedFromRestartIntervalsWhenSOFCarriesTheWindowHeight() {
+        // Width 32 with 2x2 sampling on the first component: 16x16 MCUs, 2 per
+        // row. DRI 2 = one MCU row per interval; 2 RST markers = 3 intervals =
+        // 48 rows, while SOF claims 64.
+        let driTwo: [UInt8] = [0xff, 0xdd, 0x00, 0x04, 0x00, 0x02]
+        let scan: [UInt8] = [0x11, 0x22, 0xff, 0xd0, 0x33, 0x44, 0xff, 0xd1, 0x55, 0x66]
+        let stream = soi + dqt + sof(width: 32, height: 64) + driTwo + sos + scan + eoi
+        let splitter = FujitsuJPEGStreamSplitter(requestedWidth: 32, resolutionDPI: 300, duplex: false)
+        var offset = 0
+        for size in [3, 7, 11, 13, 17] where offset < stream.count {
+            let end = min(stream.count, offset + size)
+            splitter.feed(Data(stream[offset..<end]))
+            offset = end
+        }
+        splitter.feed(Data(stream[offset...]))
+
+        XCTAssertEqual(splitter.restartInterval, 2)
+        XCTAssertEqual(splitter.frameWidth, 32)
+        XCTAssertEqual(splitter.frameHeight, 48)
+        XCTAssertEqual([UInt8](splitter.front), soi + jfif(dpi: 300) + dqt + sof(width: 32, height: 48) + driTwo + sos + scan + eoi)
+
+        // A SOF height that already matches the data (as on the iX500) is left alone.
+        let exact = FujitsuJPEGStreamSplitter(requestedWidth: 32, resolutionDPI: 300, duplex: false)
+        exact.feed(Data(soi + dqt + sof(width: 32, height: 41) + driTwo + sos + scan + eoi))
+        XCTAssertEqual(exact.frameHeight, 41)
+
+        // Without DRI there is nothing to count; SOF is trusted.
+        let noDRI = FujitsuJPEGStreamSplitter(requestedWidth: 32, resolutionDPI: 300, duplex: false)
+        noDRI.feed(Data(soi + dqt + sof(width: 32, height: 64) + sos + scan + eoi))
+        XCTAssertEqual(noDRI.frameHeight, 64)
+    }
+
+    func testInterlacedFrameHeightIsCorrectedPerSide() {
+        // Requested width 16, frame 32 wide (both sides). 2x2 sampling: one
+        // 16x16 MCU per row per side, DRI 1. interleavedScan has 3 markers:
+        // front intervals 2, back intervals 2, so 32 rows each instead of 64.
+        let stream = soi + dqt + sof(width: 32, height: 64) + dri + sos + interleavedScan + eoi
+        let splitter = FujitsuJPEGStreamSplitter(requestedWidth: 16, resolutionDPI: 300, duplex: true)
+        splitter.feed(Data(stream))
+        XCTAssertTrue(splitter.isInterlaced)
+        XCTAssertEqual(splitter.frameHeight, 32)
+        let headers = soi + jfif(dpi: 300) + dqt + sof(width: 16, height: 32) + dri + sos
+        XCTAssertEqual([UInt8](splitter.front), headers + [0x11, 0x22, 0xff, 0xd0, 0x55, 0x66] + eoi)
+        XCTAssertEqual([UInt8](splitter.back), headers + [0x33, 0x44, 0xff, 0xd0, 0x77, 0x88] + eoi)
+    }
+
     func testHardwareJPEGOptionGatingAndQualityMapping() throws {
         var options = ScanOptions(acquisition: AcquisitionSettings(source: .adfDuplex, colorMode: .color, resolutionDPI: 300, hardwareCompression: true))
         XCTAssertNoThrow(try FujitsuScanSnapModelProfile.ix500.capabilities.validate(options))

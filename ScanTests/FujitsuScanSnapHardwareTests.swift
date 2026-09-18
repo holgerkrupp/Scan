@@ -17,6 +17,20 @@ import XCTest
 /// - `SCAN_HW_JPEG` (`1` asks the scanner for hardware JPEG), `SCAN_HW_JPEG_QUALITY` (export quality 0.4-1.0 that picks the Q argument)
 /// - `SCAN_HW_OUTPUT_DIR` (directory that receives the page JPEGs and trace log)
 ///
+/// Profile experiments on a Fujitsu SCSI-over-USB model, each optional and
+/// applied on top of the registry profile so that quirks can be tried on a
+/// new scanner without rebuilding: `SCAN_HW_PREREAD`, `SCAN_HW_QTABLE`,
+/// `SCAN_HW_HOPPER`, `SCAN_HW_WAIT_AFTER_FEED`, `SCAN_HW_PROBE_INTERLACE`,
+/// `SCAN_HW_TOLERATE_GAMMA` (`0`/`1`), `SCAN_HW_PPL_MOD` (colour width
+/// modulus), `SCAN_HW_CHUNK` (bytes per image READ), `SCAN_HW_LUT_BITS`
+/// (gamma table input width), `SCAN_HW_INTERNAL_GAMMA` (built-in gamma curve
+/// instead of the downloaded linear table), `SCAN_HW_SANE_CANCEL` (SANE's cancel flow
+/// instead of halt-then-cancel), `SCAN_HW_CAP_BUFFER` and `SCAN_HW_CAP_JPEG`
+/// (`1` advertises the capability so `SCAN_HW_BUFFER`/`SCAN_HW_JPEG` take effect),
+/// `SCAN_HW_NATIVE_MONO` (`1` asks the scanner for gray/line-art instead of
+/// deriving them from colour), `SCAN_HW_RESOLUTIONS` (comma-separated dpi list
+/// to advertise, e.g. to try 400 dpi).
+///
 /// An empty feeder is reported as a successful "pre-scan flow" run; every other
 /// error fails the test. The full command trace is printed and written next to
 /// the pages.
@@ -114,6 +128,68 @@ final class FujitsuScanSnapHardwareTests: XCTestCase {
         return options
     }
 
+    private func flag(_ key: String) -> Bool? {
+        guard let value = environment[key] else { return nil }
+        return value == "1"
+    }
+
+    private func integer(_ key: String) -> Int? {
+        environment[key].flatMap { Int($0) }
+    }
+
+    /// The registry profile with the `SCAN_HW_*` profile experiments applied,
+    /// or `nil` when none is set.
+    private func experimentalProfile(basedOn base: FujitsuScanSnapModelProfile) -> FujitsuScanSnapModelProfile? {
+        let keys = ["SCAN_HW_PREREAD", "SCAN_HW_QTABLE", "SCAN_HW_HOPPER", "SCAN_HW_WAIT_AFTER_FEED", "SCAN_HW_PROBE_INTERLACE",
+                    "SCAN_HW_TOLERATE_GAMMA", "SCAN_HW_PPL_MOD", "SCAN_HW_CHUNK", "SCAN_HW_LUT_BITS", "SCAN_HW_CAP_BUFFER", "SCAN_HW_CAP_JPEG",
+                    "SCAN_HW_NATIVE_MONO", "SCAN_HW_RESOLUTIONS", "SCAN_HW_SANE_CANCEL", "SCAN_HW_INTERNAL_GAMMA"]
+        guard keys.contains(where: { environment[$0] != nil }) else { return nil }
+        let capabilities = base.capabilities
+        return FujitsuScanSnapModelProfile(
+            name: base.name + " (experiment)",
+            usbDeviceIDs: base.usbDeviceIDs,
+            capabilities: ScannerCapabilities(
+                sources: capabilities.sources,
+                colorModes: capabilities.colorModes,
+                resolutionsDPI: environment["SCAN_HW_RESOLUTIONS"]?.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) } ?? capabilities.resolutionsDPI,
+                resolutionsBySource: capabilities.resolutionsBySource,
+                outputFormats: capabilities.outputFormats,
+                scanArea: capabilities.scanArea,
+                supportsBlankPageRemoval: capabilities.supportsBlankPageRemoval,
+                supportsDeskew: capabilities.supportsDeskew,
+                supportsAutoCrop: capabilities.supportsAutoCrop,
+                supportsAutoRotate: capabilities.supportsAutoRotate,
+                supportsDuplex: capabilities.supportsDuplex,
+                supportsScannerBuffering: flag("SCAN_HW_CAP_BUFFER") ?? capabilities.supportsScannerBuffering,
+                supportsHardwareCompression: flag("SCAN_HW_CAP_JPEG") ?? capabilities.supportsHardwareCompression,
+                unsupportedReason: capabilities.unsupportedReason
+            ),
+            sendsDiagnosticPreread: flag("SCAN_HW_PREREAD") ?? base.sendsDiagnosticPreread,
+            sendsJPEGQuantizationTable: flag("SCAN_HW_QTABLE") ?? base.sendsJPEGQuantizationTable,
+            checksHopperBeforeFirstFeed: flag("SCAN_HW_HOPPER") ?? base.checksHopperBeforeFirstFeed,
+            waitsForReadyAfterFeed: flag("SCAN_HW_WAIT_AFTER_FEED") ?? base.waitsForReadyAfterFeed,
+            emulatesMonochromeInSoftware: flag("SCAN_HW_NATIVE_MONO").map { !$0 } ?? base.emulatesMonochromeInSoftware,
+            pixelsPerLineModulus: integer("SCAN_HW_PPL_MOD") ?? base.pixelsPerLineModulus,
+            lineartPixelsPerLineModulus: base.lineartPixelsPerLineModulus,
+            probesColorInterlace: flag("SCAN_HW_PROBE_INTERLACE") ?? base.probesColorInterlace,
+            toleratesModeSelectFailures: base.toleratesModeSelectFailures,
+            toleratesGammaTableFailure: flag("SCAN_HW_TOLERATE_GAMMA") ?? base.toleratesGammaTableFailure,
+            usesSANECancelFlow: flag("SCAN_HW_SANE_CANCEL") ?? base.usesSANECancelFlow,
+            usesInternalGammaTable: flag("SCAN_HW_INTERNAL_GAMMA") ?? base.usesInternalGammaTable,
+            transferChunkSize: integer("SCAN_HW_CHUNK") ?? base.transferChunkSize,
+            lookupTableInputBits: integer("SCAN_HW_LUT_BITS") ?? base.lookupTableInputBits
+        )
+    }
+
+    private func makeDevice(driver: ScannerDriver, identity: ScannerIdentity, transport: USBDeviceTransport, collector: TraceCollector) -> ScannerDevice {
+        let device = driver.makeDevice(identity: identity, transport: transport)
+        guard let fujitsu = device as? FujitsuScanSnapDevice, let profile = experimentalProfile(basedOn: fujitsu.profile) else {
+            return device
+        }
+        collector.append("Profile experiment: native-mono \(!profile.emulatesMonochromeInSoftware), resolutions \(profile.capabilities.resolutionsDPI), preread \(profile.sendsDiagnosticPreread), q-table \(profile.sendsJPEGQuantizationTable), hopper \(profile.checksHopperBeforeFirstFeed), wait-after-feed \(profile.waitsForReadyAfterFeed), ppl-mod \(profile.pixelsPerLineModulus), probe-interlace \(profile.probesColorInterlace), tolerate-gamma \(profile.toleratesGammaTableFailure), sane-cancel \(profile.usesSANECancelFlow), internal-gamma \(profile.usesInternalGammaTable), chunk \(profile.transferChunkSize), lut-bits \(profile.lookupTableInputBits), cap-buffer \(profile.capabilities.supportsScannerBuffering), cap-jpeg \(profile.capabilities.supportsHardwareCompression)")
+        return FujitsuScanSnapDevice(identity: identity, transport: transport, profile: profile)
+    }
+
     private func outputDirectory() throws -> URL {
         let base = environment["SCAN_HW_OUTPUT_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
             ?? FileManager.default.temporaryDirectory.appendingPathComponent("ScanHardwareTests", isDirectory: true)
@@ -138,7 +214,7 @@ final class FujitsuScanSnapHardwareTests: XCTestCase {
         collector.append("Driver: \(driver.name)")
 
         let transport = IOKitUSBDeviceTransport(identity: identity)
-        let device = driver.makeDevice(identity: identity, transport: transport)
+        let device = makeDevice(driver: driver, identity: identity, transport: transport, collector: collector)
         let options = requestedOptions()
         collector.append("Options: \(options.source.rawValue), \(options.colorMode.rawValue), \(options.resolutionDPI) dpi, auto-crop \(options.autoCrop), buffering \(options.acquisition.scannerBuffering), hardware JPEG \(options.acquisition.hardwareCompression) (export quality \(options.export.jpegQuality))")
 
@@ -182,5 +258,36 @@ final class FujitsuScanSnapHardwareTests: XCTestCase {
                 XCTAssertEqual(frame.resolutionDPI, options.resolutionDPI)
             }
         }
+    }
+
+    /// Dumps the scanner's vital product data (INQUIRY EVPD page 0xf0) so a
+    /// new model's capabilities can be compared with its profile.
+    func testDumpVitalProductData() async throws {
+        try requireHardwareOptIn()
+        let identity = try await connectedIdentity()
+        let collector = TraceCollector()
+        let folder = try outputDirectory()
+        guard let driver = ScannerDriverRegistry.live.driver(for: identity) else {
+            return XCTFail("No native driver claims \(identity.subtitle).")
+        }
+        let transport = IOKitUSBDeviceTransport(identity: identity)
+        guard let device = driver.makeDevice(identity: identity, transport: transport) as? FujitsuScanSnapDevice else {
+            throw XCTSkip("\(driver.name) is not a Fujitsu SCSI-over-USB driver.")
+        }
+        defer {
+            try? collector.text.write(to: folder.appendingPathComponent("vpd.log"), atomically: true, encoding: .utf8)
+        }
+        try await device.open()
+        do {
+            let vpd = try await device.readVitalProductData()
+            collector.append("Identity: \(identity.name) \(identity.subtitle)")
+            collector.append(vpd.summary)
+            collector.append("\n" + vpd.hexDump)
+            XCTAssertGreaterThanOrEqual(vpd.bytes.count, 0x5f, "VPD shorter than SANE's minimum")
+        } catch {
+            await device.close()
+            return XCTFail("VPD inquiry failed: \(error.localizedDescription)")
+        }
+        await device.close()
     }
 }
