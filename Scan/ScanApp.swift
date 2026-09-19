@@ -77,6 +77,20 @@ struct ScanApp: App {
                 }
             }
 
+            CommandGroup(after: .pasteboard) {
+                Divider()
+                Button("Auto-Align Page") {
+                    Task { await workspace.alignSelectedPage() }
+                }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
+                .disabled(workspace.selectedPageID == nil || workspace.isScanning)
+                Button("Rotate Page 90°") {
+                    Task { await workspace.rotateSelectedPage() }
+                }
+                .keyboardShortcut("r", modifiers: [.command])
+                .disabled(workspace.selectedPageID == nil || workspace.isScanning)
+            }
+
             // Scan has no document model, printing, import/export, or undo
             // support. Its file actions live in the focused Scan menu above.
             CommandGroup(replacing: .newItem) { }

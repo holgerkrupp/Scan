@@ -31,6 +31,49 @@ selection, Space opens the selected page in Quick Look, and a click on empty
 space clears the selection. The slider next to "Reveal in Finder" sets the
 thumbnail size.
 
+## Automatic alignment
+
+ScanSnap Home straightens sheets and crops away their edges in software; the
+scanners themselves only trim the page length (the iX-series reports no
+hardware deskew or crop in its capability page). Scan does the same with the
+**Deskew and crop to page** option in the Processing section of a profile,
+applied to every page on export, and with **Edit > Auto-Align Page**
+(Command-Shift-L, also in a page's context menu) for a selected page. The
+separate **Crop to content** option trims the paper margins down to the
+printed content afterwards, for receipts and clippings. The page outline is found
+with Vision's document segmentation, the sheet is rotated by the tilt of its
+edges onto a white canvas, and the result is cropped to the largest rectangle
+inside the straightened sheet, minus a small margin that removes the edge
+shadow. When no outline can be found, the tilt is estimated from the content
+(the angle at which the rows of dark pixels line up best) and the background
+wedges left by the rotation are cropped away.
+
+## Reviewing and processing pages
+
+Scanning produces an intermediate result that you refine before exporting.
+The app keeps every raw scan for the review session and shows processed
+renditions in the page grid: the profile's processing options (deskew and
+crop, crop to content, whiten paper, paper cleanup, automatic orientation,
+blank-page removal) are applied to each page as it arrives, in the
+background, and re-applied to all pages whenever an option changes. Blank
+pages are hidden rather than deleted and reappear when blank-page removal is
+switched off; the header shows how many are hidden. Rotate and Auto-Align
+from the Edit menu are per-page adjustments layered on top of the profile.
+Export writes exactly the pages you see, applying only the output
+resolution and compression. The session ends with Clear or the next scan.
+
+## Paper tone and blank pages
+
+The iX-series delivers plain paper as light gray (about 230–245 of 255 on
+the iX1600 depending on the paper, with the scanner's built-in gamma curve
+about ten levels lighter than a downloaded linear table). **Whiten paper**
+in the Processing section measures each page's paper level and stretches it
+to white while black stays black; pages whose overall tone is not paper, such
+as photos, are left alone. Blank-page removal judges ink relative to the same
+paper level (with the sheet's edge excluded), so a blank page is recognised
+whatever gray the scanner makes of it, and a dark page is never treated as
+blank.
+
 ## Native USB support
 
 The native Fujitsu USB backends recognize the following models:

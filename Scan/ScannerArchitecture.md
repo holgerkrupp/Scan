@@ -2,7 +2,9 @@
 
 The app separates scanner acquisition from image processing and export:
 
-`ScannerDiscovery` -> `ScannerDriver`/`ScannerDevice` -> `PageFrame` stream -> file-backed `ScanPageStore` -> `ScanImageProcessor` -> `ScanOutputWriter`.
+`ScannerDiscovery` -> `ScannerDriver`/`ScannerDevice` -> `PageFrame` stream -> file-backed `ScanPageStore` (raw pages) -> `ScanImageProcessor` (in the workspace, as pages arrive and whenever the processing options change) -> processed pages in the grid -> `ScanOutputWriter` (output resolution and compression only).
+
+The review session is dynamic: `ScannerWorkspaceViewModel` keeps `rawPages` (the scans as delivered, written as `Raw N side.jpg`), renders each into `processedPages` (`Page N side.jpg`) with the profile's `ImageProcessingSettings` plus the page's `PageEdits` (quarter turns from Rotate, an alignment flag from Auto-Align), and hides pages that `ScanImageProcessor.process` reports blank in `blankPageIDs`. `pages`, what the grid shows and the export writes, is derived from those. Processing runs one page at a time on a utility-priority detached task chained behind the previous one (`processingChain`); a `processingGeneration` counter discards results that were computed for outdated settings or removed pages. `updateProfile`/`selectProfile` compare the processing settings and schedule a debounced (250 ms) re-render of every raw page; `ingest` stores a frame and queues it; `waitForProcessing` is awaited before the automatic and manual export. `ScanOutputWriter.write(pages:)` therefore applies empty processing settings and only scales to the output DPI and compresses, so the export matches the grid.
 
 ## Settings and profiles
 

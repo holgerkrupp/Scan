@@ -1,7 +1,6 @@
 import AppKit
 import CoreImage
 import Foundation
-@preconcurrency import Vision
 
 struct ProcessedPage: Sendable {
     let frame: PageFrame
@@ -15,41 +14,68 @@ enum ScanImageProcessor {
         }
         if settings.removeBlankPages && isBlank(image) { return nil }
         var rendered = image
+        // Straighten and crop to the page first, then optionally to the content.
+        if settings.deskew { rendered = PageAlignment.align(rendered)?.image ?? rendered }
         if settings.autoCrop { rendered = cropToContent(rendered) ?? rendered }
-        if settings.deskew { rendered = deskew(rendered) ?? rendered }
         if settings.autoRotate && rendered.width > rendered.height { rendered = rotate(rendered, degrees: 90) ?? rendered }
         if settings.rotation != .degrees0 { rendered = rotate(rendered, degrees: settings.rotation.rawValue) ?? rendered }
+        if settings.whitenPaper { rendered = whitenPaper(rendered) ?? rendered }
         if settings.paperCleanup > 0 { rendered = applyPaperCleanup(rendered, amount: settings.paperCleanup) ?? rendered }
         let dpi = max(outputDPI, 1)
         let requestedScale = CGFloat(dpi) / CGFloat(max(frame.resolutionDPI, 1))
-        let metadataCorrection = CGFloat(max(frame.width, 1)) / CGFloat(max(rendered.width, 1))
+        // Frame metadata can disagree with the decoded size (hardware JPEG
+        // widths are block-rounded); correct for that, but never rescale the
+        // result of cropping, alignment or rotation back to the original width.
+        let metadataCorrection = CGFloat(max(frame.width, 1)) / CGFloat(max(image.width, 1))
         let scaled = dpi == frame.resolutionDPI && metadataCorrection == 1 ? rendered : resize(rendered, scale: requestedScale * metadataCorrection) ?? rendered
         let data = try encodeJPEG(scaled, quality: 1.0)
         return PageFrame(id: frame.id, pageIndex: frame.pageIndex, side: frame.side, pixelFormat: .jpeg, width: scaled.width, height: scaled.height, resolutionDPI: dpi, data: data)
     }
 
-    static func isBlank(_ image: CGImage, threshold: UInt8 = 245, darkPixelRatio: Double = 0.004) -> Bool {
-        guard let provider = image.dataProvider, let data = provider.data as Data? else { return false }
-        let components = image.bitsPerPixel / max(image.bitsPerComponent, 1)
-        let channels = max(components, 1)
-        let bytesPerRow = image.bytesPerRow
-        let bytes = [UInt8](data)
-        let stepX = max(image.width / 160, 1)
-        let stepY = max(image.height / 160, 1)
-        var dark = 0
-        var samples = 0
-        for y in stride(from: 0, to: image.height, by: stepY) {
-            for x in stride(from: 0, to: image.width, by: stepX) {
-                let offset = y * bytesPerRow + x * channels
-                guard offset < bytes.count else { continue }
-                let r = bytes[offset]
-                let g = channels > 1 && offset + 1 < bytes.count ? bytes[offset + 1] : r
-                let b = channels > 2 && offset + 2 < bytes.count ? bytes[offset + 2] : g
-                if max(r, max(g, b)) < threshold { dark += 1 }
-                samples += 1
+    /// A page is blank when almost none of it is ink. Ink is judged relative
+    /// to the page's own paper level (the median of the sampled luminance),
+    /// because scanners render paper anywhere between about 235 and 255
+    /// depending on the paper and the gamma curve; a fixed near-white
+    /// threshold treated ordinary paper texture as content. The outer 3
+    /// percent of each edge is ignored, where the sheet's edge and shadow
+    /// lie, and bleed-through from the other side stays well above the ink
+    /// threshold.
+    static func isBlank(_ image: CGImage, inkContrast: Int = 90, inkRatio: Double = 0.002) -> Bool {
+        let stats = inkStatistics(image, inkContrast: inkContrast)
+        // A page whose typical tone is not paper (a photo, a dark flyer) is content by definition.
+        return stats.samples > 0 && stats.paperLevel >= minimumPaperLevel && stats.inkRatio < inkRatio
+    }
+
+    /// Lowest median luminance that still counts as paper.
+    static let minimumPaperLevel = 180
+
+    struct InkStatistics {
+        let samples: Int
+        let paperLevel: Int
+        let inkRatio: Double
+    }
+
+    /// Luminance samples on a grid of about 200x200 points inside the page,
+    /// with the paper level and the fraction darker than `paperLevel - inkContrast`.
+    static func inkStatistics(_ image: CGImage, inkContrast: Int = 90) -> InkStatistics {
+        guard let sample = PageAlignment.downsampledGray(image, maxWidth: 400) else {
+            return InkStatistics(samples: 0, paperLevel: 255, inkRatio: 0)
+        }
+        let insetX = sample.width * 3 / 100, insetY = sample.height * 3 / 100
+        var histogram = [Int](repeating: 0, count: 256)
+        var count = 0
+        for y in insetY..<(sample.height - insetY) {
+            for x in insetX..<(sample.width - insetX) {
+                histogram[Int(sample.pixels[y * sample.width + x])] += 1
+                count += 1
             }
         }
-        return samples > 0 && Double(dark) / Double(samples) < darkPixelRatio
+        guard count > 0 else { return InkStatistics(samples: 0, paperLevel: 255, inkRatio: 0) }
+        var seen = 0, median = 255
+        for value in 0..<256 { seen += histogram[value]; if seen >= count / 2 { median = value; break } }
+        let inkLimit = max(0, median - inkContrast)
+        let ink = (0..<inkLimit).reduce(0) { $0 + histogram[$1] }
+        return InkStatistics(samples: count, paperLevel: median, inkRatio: Double(ink) / Double(count))
     }
 
     private static func cropToContent(_ image: CGImage) -> CGImage? {
@@ -71,19 +97,6 @@ enum ScanImageProcessor {
         return image.cropping(to: rect)
     }
 
-    private static func deskew(_ image: CGImage) -> CGImage? {
-        let request = VNDetectRectanglesRequest(); request.maximumObservations = 1; request.minimumConfidence = 0.45; request.minimumAspectRatio = 0.35
-        guard (try? VNImageRequestHandler(cgImage: image).perform([request])) != nil, let observation = request.results?.first else { return nil }
-        let angle = atan2(observation.topRight.y - observation.topLeft.y, observation.topRight.x - observation.topLeft.x) * 180 / .pi
-        guard abs(angle) > 0.01 else { return image }
-        let radians = -angle * .pi / 180
-        let bounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
-        let rotated = CGRect(origin: .zero, size: bounds.size).applying(CGAffineTransform(rotationAngle: radians)).standardized
-        guard let context = CGContext(data: nil, width: Int(rotated.width), height: Int(rotated.height), bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-        context.translateBy(x: -rotated.minX, y: -rotated.minY); context.rotate(by: radians); context.draw(image, in: bounds)
-        return context.makeImage()
-    }
-
     static func rotate(_ image: CGImage, degrees: Int) -> CGImage? {
         let normalized = ((degrees % 360) + 360) % 360
         guard normalized != 0 else { return image }
@@ -94,12 +107,31 @@ enum ScanImageProcessor {
         context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height)); return context.makeImage()
     }
 
+    /// Stretches the page so its paper level lands on white. Scanners render
+    /// plain paper anywhere from about 230 to 250; ScanSnap Home whitens it,
+    /// this does the same with a per-page gain (black stays anchored). Pages
+    /// whose median is not paper-like, such as photos, are left alone, and the
+    /// gain is capped so nothing is pushed more than a quarter brighter.
+    static let paperWhiteTarget = 253
+    static func whitenPaper(_ image: CGImage) -> CGImage? {
+        let stats = inkStatistics(image)
+        guard stats.samples > 0, stats.paperLevel >= minimumPaperLevel, stats.paperLevel < paperWhiteTarget else { return image }
+        let gain = min(1.25, Double(paperWhiteTarget) / Double(stats.paperLevel))
+        return applyGain(image, gain: gain)
+    }
+
     /// Suppresses faint paper shadows by moving the white point down by up to
     /// 12 percent. This keeps black anchored at black while clipped highlights
     /// make shallow folds and page texture less visible.
     static func applyPaperCleanup(_ image: CGImage, amount: Double) -> CGImage? {
         let strength = min(max(amount, 0), 1)
         guard strength > 0 else { return image }
+        return applyGain(image, gain: 1 / (1 - 0.12 * strength))
+    }
+
+    /// Multiplies every channel by `gain`, clipping at white.
+    static func applyGain(_ image: CGImage, gain: Double) -> CGImage? {
+        guard gain > 1.0001 else { return image }
         let bytesPerRow = image.width * 4
         guard let context = CGContext(
             data: nil,
@@ -113,7 +145,6 @@ enum ScanImageProcessor {
         context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
         guard let data = context.data else { return nil }
         let pixels = data.bindMemory(to: UInt8.self, capacity: bytesPerRow * image.height)
-        let gain = 1 / (1 - 0.12 * strength)
         for row in 0..<image.height {
             let rowStart = row * bytesPerRow
             for column in 0..<image.width {
