@@ -81,6 +81,20 @@ struct FujitsuScanSnapModelProfile: Sendable {
     /// has `1 << lookupTableInputBits` entries mapping onto 8-bit output.
     let lookupTableInputBits: Int
 
+    /// Fujitsu's `GET HW STATUS` response reports the panel button in byte 4.
+    /// Bit 0 is the short-tap pulse and bit 5 is the sustained-held state. The
+    /// mapping is validated on S1500, S510M, iX500 and iX1600 hardware; other
+    /// claimed Fujitsu profiles use it only as explicitly unvalidated support.
+    var hardwareButtonSupport: ScannerHardwareEventSupportState {
+        if name.contains("S1500") || name.contains("S510") || name.contains("iX500") || name.contains("iX1600") {
+            return .supportedValidated
+        }
+        return .supportedUnvalidated
+    }
+
+    var hardwareButtonStatusByte = 4
+    var hardwareButtonMask: UInt8 = 0x21
+
     func pixelsPerLineModulus(for mode: ScanColorMode) -> Int {
         mode == .lineart ? lineartPixelsPerLineModulus : pixelsPerLineModulus
     }

@@ -1,7 +1,138 @@
 import AppKit
 import Foundation
 import Observation
+import ServiceManagement
 import SwiftUI
+import UserNotifications
+
+@MainActor
+final class HardwareScanCoordinator {
+    private let registry: ScannerDriverRegistry
+    private let onEvent: (ScannerIdentity, ScannerHardwareEventCapabilities, ScannerHardwareEvent) -> Void
+    private let onDiagnostic: (String) -> Void
+    private var task: Task<Void, Never>?
+    private var activeDevice: ScannerDevice?
+    private var activeSource: ScannerHardwareEventSource?
+
+    init(
+        registry: ScannerDriverRegistry,
+        onEvent: @escaping (ScannerIdentity, ScannerHardwareEventCapabilities, ScannerHardwareEvent) -> Void,
+        onDiagnostic: @escaping (String) -> Void
+    ) {
+        self.registry = registry
+        self.onEvent = onEvent
+        self.onDiagnostic = onDiagnostic
+    }
+
+    func start(identity: ScannerIdentity) {
+        task = Task { [weak self] in
+            await self?.monitor(identity: identity)
+        }
+    }
+
+    func stop() async {
+        task?.cancel()
+        task = nil
+        await activeSource?.stopHardwareEventObservation()
+        await activeDevice?.close()
+        activeSource = nil
+        activeDevice = nil
+    }
+
+    private func monitor(identity: ScannerIdentity) async {
+        while !Task.isCancelled {
+            guard let driver = registry.driver(for: identity) else { return }
+            let transport: USBDeviceTransport? = identity.connectionKind == .usb ? IOKitUSBDeviceTransport(identity: identity) : nil
+            let device = driver.makeDevice(identity: identity, transport: transport)
+            activeDevice = device
+            do {
+                try await device.open()
+                guard let source = device as? ScannerHardwareEventSource else {
+                    onDiagnostic("\(identity.name) does not expose a hardware-button event source.")
+                    await device.close()
+                    return
+                }
+                activeSource = source
+                let capabilities = source.hardwareEventCapabilities
+                let stream = try await source.startHardwareEventObservation()
+                for await event in stream {
+                    guard !Task.isCancelled else { break }
+                    onEvent(identity, capabilities, event)
+                }
+            } catch is CancellationError {
+                break
+            } catch {
+                onDiagnostic("Hardware-button monitoring for \(identity.name) is unavailable: \(error.localizedDescription)")
+            }
+            await sourceStopAndClose(source: activeSource, device: device)
+            activeSource = nil
+            activeDevice = nil
+            guard !Task.isCancelled else { break }
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+        }
+    }
+
+    private func sourceStopAndClose(source: ScannerHardwareEventSource?, device: ScannerDevice) async {
+        await source?.stopHardwareEventObservation()
+        await device.close()
+    }
+}
+
+final class ScanNotificationService: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = ScanNotificationService()
+    private let center = UNUserNotificationCenter.current()
+    private let categoryID = "scan.hardware-result"
+    private let revealActionID = "scan.reveal-result"
+
+    private override init() {
+        super.init()
+        center.delegate = self
+        let action = UNNotificationAction(identifier: revealActionID, title: "Reveal Scan", options: [.foreground])
+        let category = UNNotificationCategory(identifier: categoryID, actions: [action], intentIdentifiers: [])
+        center.setNotificationCategories([category])
+    }
+
+    func requestAuthorization() async {
+        _ = try? await center.requestAuthorization(options: [.alert, .sound])
+    }
+
+    func notifySuccess(identity: ScannerIdentity, outputURLs: [URL], pages: Int) {
+        let content = UNMutableNotificationContent()
+        content.title = "Scan complete"
+        content.body = "\(identity.name) scanned \(pages) page\(pages == 1 ? "" : "s")."
+        content.sound = .default
+        content.categoryIdentifier = categoryID
+        content.userInfo = ["url": outputURLs.first?.path as Any]
+        add(content)
+    }
+
+    func notifyFailure(identity: ScannerIdentity, message: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "Scan failed"
+        content.body = "\(identity.name): \(message)"
+        content.sound = .default
+        content.categoryIdentifier = categoryID
+        add(content)
+    }
+
+    private func add(_ content: UNMutableNotificationContent) {
+        let request = UNNotificationRequest(identifier: "scan-\(UUID().uuidString)", content: content, trigger: nil)
+        center.add(request)
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        let path = response.notification.request.content.userInfo["url"] as? String
+        Task { @MainActor in
+            if let path { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+            else { NSApp.activate(ignoringOtherApps: true) }
+            completionHandler()
+        }
+    }
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
+    }
+}
 
 actor ScanPageStore {
     private let folder: URL
@@ -63,6 +194,9 @@ final class ScannerWorkspaceViewModel {
     var diagnosticsExpanded = false
     var isCancelRequested = false
     var s300FirmwareFilename: String?
+    var hardwareButtonSettings: HardwareButtonSettings
+    var hardwareButtonCapabilities: ScannerHardwareEventCapabilities?
+    var hardwareButtonStatusMessage: String?
 
     private let discovery: ScannerDiscovery
     private let registry: ScannerDriverRegistry
@@ -74,11 +208,18 @@ final class ScannerWorkspaceViewModel {
     private let s300FirmwareStore: ScanSnapS300FirmwareStore
     private let automaticRefreshDelay: Duration
     private var automaticRefreshTask: Task<Void, Never>?
+    private let hardwareSettingsStore: HardwareButtonSettingsStore
+    private var hardwareDiagnosticKeys: Set<String> = []
+
+    @ObservationIgnored private var hardwareCoordinator: HardwareScanCoordinator? = nil
 
     convenience init() { self.init(discovery: CompositeScannerDiscovery(), registry: .live, outputWriter: ScanOutputWriter(), profileStore: ScanProfileStore(defaults: .standard)) }
 
     init(discovery: ScannerDiscovery, registry: ScannerDriverRegistry, outputWriter: ScanOutputWriter, profileStore: ScanProfileStore, automaticRefreshDelay: Duration = .seconds(1)) {
         self.discovery = discovery; self.registry = registry; self.outputWriter = outputWriter; self.profileStore = profileStore; self.automaticRefreshDelay = automaticRefreshDelay
+        let hardwareStore = HardwareButtonSettingsStore(defaults: .standard)
+        self.hardwareSettingsStore = hardwareStore
+        self.hardwareButtonSettings = hardwareStore.load()
         let firmwareStore = ScanSnapS300FirmwareStore(defaults: .standard)
         self.s300FirmwareStore = firmwareStore
         self.s300FirmwareFilename = firmwareStore.selectedFilename
@@ -91,7 +232,114 @@ final class ScannerWorkspaceViewModel {
             guard let message = note.userInfo?[ScanTrace.messageKey] as? String else { return }
             Task { @MainActor [weak self] in self?.log(message) }
         }
+        self.hardwareCoordinator = HardwareScanCoordinator(
+            registry: registry,
+            onEvent: { [weak self] identity, capabilities, event in
+                self?.handleHardwareEvent(identity: identity, capabilities: capabilities, event: event)
+            },
+            onDiagnostic: { [weak self] message in self?.logHardwareDiagnostic(message) }
+        )
         discovery.observeChanges { [weak self] in self?.scheduleAutomaticRefresh() }
+    }
+
+    var hardwareButtonEnabled: Bool {
+        get { hardwareButtonSettings.enabled }
+        set { setHardwareButtonEnabled(newValue) }
+    }
+
+    var hardwareLaunchAtLogin: Bool {
+        get { hardwareButtonSettings.launchAtLogin }
+        set { setHardwareLaunchAtLogin(newValue) }
+    }
+
+    var hardwareDefaultProfileID: UUID? {
+        get { hardwareButtonSettings.defaultProfileID }
+        set {
+            hardwareButtonSettings.defaultProfileID = newValue
+            persistHardwareSettings()
+            Task { await restartHardwareMonitoring() }
+        }
+    }
+
+    func applicationDidLaunch() async {
+        applyBackgroundPolicy()
+        guard hardwareButtonSettings.enabled else { return }
+        await ScanNotificationService.shared.requestAuthorization()
+        await refreshDevices()
+        await restartHardwareMonitoring()
+    }
+
+    func setHardwareButtonEnabled(_ enabled: Bool) {
+        if enabled, hardwareButtonSettings.defaultProfileID == nil {
+            hardwareButtonSettings.defaultProfileID = selectedProfile.id
+        }
+        hardwareButtonSettings.enabled = enabled
+        persistHardwareSettings()
+        applyBackgroundPolicy()
+        Task {
+            if enabled { await ScanNotificationService.shared.requestAuthorization() }
+            await restartHardwareMonitoring()
+        }
+    }
+
+    func setHardwareLaunchAtLogin(_ enabled: Bool) {
+        hardwareButtonSettings.launchAtLogin = enabled
+        persistHardwareSettings()
+        applyBackgroundPolicy()
+    }
+
+    func hardwareProfileID(for identity: ScannerIdentity) -> UUID? {
+        hardwareButtonSettings.perScannerProfileIDs[identity.id] ?? hardwareButtonSettings.defaultProfileID ?? selectedProfile.id
+    }
+
+    func setHardwareProfileOverride(_ profileID: UUID?, for identity: ScannerIdentity) {
+        if let profileID { hardwareButtonSettings.perScannerProfileIDs[identity.id] = profileID }
+        else { hardwareButtonSettings.perScannerProfileIDs.removeValue(forKey: identity.id) }
+        persistHardwareSettings()
+    }
+
+    func hardwareDestination(for identity: ScannerIdentity) -> URL {
+        hardwareSettingsStore.destination(for: identity, settings: hardwareButtonSettings) ?? destinationFolder
+    }
+
+    func chooseHardwareDestination() {
+        guard let identity = selectedIdentity else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = hardwareDestination(for: identity)
+        panel.prompt = "Use for One-Touch Scans"
+        panel.title = "One-Touch Scan Destination"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try hardwareSettingsStore.setDestination(url, for: identity, settings: &hardwareButtonSettings)
+            hardwareButtonStatusMessage = "One-touch scans for \(identity.name) will be saved to \(url.path)."
+            log(hardwareButtonStatusMessage ?? "")
+        } catch {
+            hardwareButtonStatusMessage = "Could not save the one-touch destination: \(error.localizedDescription)"
+            logHardwareDiagnostic(hardwareButtonStatusMessage ?? "")
+        }
+    }
+
+    func hardwareProfileSummary(for identity: ScannerIdentity?) -> String {
+        guard let identity, let profileID = hardwareProfileID(for: identity), let profile = profiles.first(where: { $0.id == profileID }) else {
+            return "No one-touch profile selected."
+        }
+        let options = profile.options
+        return "\(profile.name), \(options.source.rawValue.lowercased()), \(options.resolutionDPI) dpi \(options.colorMode.rawValue.lowercased()) → \(hardwareDestination(for: identity).path)"
+    }
+
+    private func persistHardwareSettings() { hardwareSettingsStore.save(hardwareButtonSettings) }
+
+    private func applyBackgroundPolicy() {
+        NSApp.setActivationPolicy(hardwareButtonSettings.enabled ? .accessory : .regular)
+        do {
+            if hardwareButtonSettings.launchAtLogin { try SMAppService.mainApp.register() }
+            else { try SMAppService.mainApp.unregister() }
+        } catch {
+            logHardwareDiagnostic("Could not update launch-at-login: \(error.localizedDescription)")
+        }
     }
 
     func refreshDevices() async { await refreshDevices(isAutomatic: false) }
@@ -105,6 +353,62 @@ final class ScannerWorkspaceViewModel {
         // An automatic refresh keeps the current status (such as an unread scan error) unless the selected scanner changed.
         if !isAutomatic || selectedIdentity?.id != previousSelectionID { status = selectedIdentity == nil ? .disconnected : .idle }
         log("Discovered \(identities.count) scanner candidate\(identities.count == 1 ? "" : "s").")
+        if hardwareButtonSettings.enabled, !isScanning { await restartHardwareMonitoring() }
+    }
+
+    private func restartHardwareMonitoring() async {
+        await hardwareCoordinator?.stop()
+        guard hardwareButtonSettings.enabled, !isScanning else { return }
+        guard let identity = selectedIdentity ?? discoveredIdentities.first else {
+            hardwareButtonStatusMessage = "One-touch scanning is enabled, but no scanner is connected."
+            return
+        }
+        hardwareCoordinator?.start(identity: identity)
+    }
+
+    private func handleHardwareEvent(
+        identity: ScannerIdentity,
+        capabilities: ScannerHardwareEventCapabilities,
+        event: ScannerHardwareEvent
+    ) {
+        hardwareButtonCapabilities = capabilities
+        switch event {
+        case .scanButtonPressed:
+            guard capabilities.supportsOneTouchScanning else {
+                let message = "\(identity.name) reported a Scan button press, but one-touch acquisition is not available for this backend yet."
+                hardwareButtonStatusMessage = message
+                logHardwareDiagnostic(message)
+                return
+            }
+            guard hardwareButtonSettings.enabled, !isScanning else { return }
+            Task { await performHardwareScan(for: identity) }
+        case let .feederChanged(hasPaper):
+            log("\(identity.name) feeder \(hasPaper ? "has paper" : "is empty") (hardware event).")
+        case let .diagnostic(message):
+            logHardwareDiagnostic(message)
+        }
+    }
+
+    private func logHardwareDiagnostic(_ message: String) {
+        let key = message.replacingOccurrences(of: "[0-9]+", with: "#", options: .regularExpression)
+        guard hardwareDiagnosticKeys.insert(key).inserted else { return }
+        hardwareButtonStatusMessage = message
+        log(message)
+    }
+
+    private func performHardwareScan(for identity: ScannerIdentity) async {
+        guard !isScanning else { return }
+        let profileID = hardwareProfileID(for: identity)
+        let destination = hardwareDestination(for: identity)
+        do {
+            await hardwareCoordinator?.stop()
+            let result = try await scanAndExport(profileID: profileID, identity: identity, destinationOverride: destination)
+            ScanNotificationService.shared.notifySuccess(identity: identity, outputURLs: result.outputURLs, pages: result.pagesScanned)
+        } catch {
+            logHardwareDiagnostic("One-touch scan failed for \(identity.name): \(error.localizedDescription)")
+            ScanNotificationService.shared.notifyFailure(identity: identity, message: error.localizedDescription)
+            await restartHardwareMonitoring()
+        }
     }
 
     /// Plugging in a scanner fires several notifications (USB and Image Capture), so they are coalesced into one refresh.
@@ -157,10 +461,11 @@ final class ScannerWorkspaceViewModel {
         }
     }
 
-    func startScan() async {
+    func startScan(destinationOverride: URL? = nil) async {
         guard let selectedIdentity else { status = .error("Select a scanner before scanning."); return }
         guard let driver = registry.driver(for: selectedIdentity) else { status = .error("No driver is available for \(selectedIdentity.name). This device is discovered but unsupported."); return }
 
+        await hardwareCoordinator?.stop()
         isScanning = true; isCancelRequested = false; pagesScanned = 0; lastOutputs = []; lastOutputByteCount = 0; pages = []; selectedPageID = nil; status = .scanning(progress: nil, pagesScanned: 0)
         let store = ScanPageStore(); pageStore = store
         let transport: USBDeviceTransport? = selectedIdentity.connectionKind == .usb ? IOKitUSBDeviceTransport(identity: selectedIdentity) : nil
@@ -177,18 +482,19 @@ final class ScannerWorkspaceViewModel {
                 pages.append(page); pagesScanned = pages.count; selectedPageID = selectedPageID ?? page.id; status = .scanning(progress: nil, pagesScanned: pages.count)
             }
             status = .idle; log("Received \(pages.count) page\(pages.count == 1 ? "" : "s").")
-            if selectedProfile.options.export.automaticallySaveAfterScanning { await saveExport() }
+            if selectedProfile.options.export.automaticallySaveAfterScanning { await saveExport(destinationOverride: destinationOverride) }
         } catch {
             if isCancelRequested || error is CancellationError || (error as? ScannerError) == .scanCancelled { status = .idle; log("Scan cancelled; retained \(pages.count) partial page\(pages.count == 1 ? "" : "s") for review.") }
             else { status = .error(error.localizedDescription); log("Scan failed: \(error.localizedDescription)") }
         }
         await device.close()
+        await restartHardwareMonitoring()
     }
 
     /// Runs the selected profile as a complete, export-producing job for an
     /// automation. Unlike the interactive Scan button, this always exports the
     /// captured pages so Shortcuts has files it can pass to its next action.
-    func scanAndExport(profileID: UUID? = nil) async throws -> ScanJobResult {
+    func scanAndExport(profileID: UUID? = nil, identity: ScannerIdentity? = nil, destinationOverride: URL? = nil) async throws -> ScanJobResult {
         if let profileID {
             guard profiles.contains(where: { $0.id == profileID }) else {
                 throw ScannerError.outputFailed("The selected scan profile is no longer available.")
@@ -196,16 +502,17 @@ final class ScannerWorkspaceViewModel {
             selectProfile(id: profileID)
         }
 
-        await refreshDevices()
+        if let identity { selectedIdentity = identity }
+        else { await refreshDevices() }
         guard selectedIdentity != nil else { throw ScannerError.deviceNotFound }
 
-        await startScan()
+        await startScan(destinationOverride: destinationOverride)
         if isCancelRequested { throw ScannerError.scanCancelled }
         if case let .error(message) = status { throw ScannerError.outputFailed(message) }
         guard !pages.isEmpty else { throw ScannerError.feederEmpty }
 
         if lastOutputs.isEmpty {
-            await saveExport()
+            await saveExport(destinationOverride: destinationOverride)
         }
         if case let .error(message) = status { throw ScannerError.outputFailed(message) }
         guard !lastOutputs.isEmpty else {
@@ -218,9 +525,9 @@ final class ScannerWorkspaceViewModel {
         guard isScanning else { return }; isCancelRequested = true; await activeDevice?.cancel(); activeDevice = nil; status = .idle; isScanning = false; log("Scan cancellation requested; partial pages are retained.")
     }
 
-    func saveExport() async {
+    func saveExport(destinationOverride: URL? = nil) async {
         guard !pages.isEmpty else { status = .error("There are no pages to export."); return }
-        do { let result = try await outputWriter.write(pages: pages, options: selectedProfile.options, destinationFolder: destinationFolder); lastOutputs = result.outputURLs; lastOutputByteCount = result.outputByteCount; status = .idle; log("Exported \(result.pagesScanned) page\(result.pagesScanned == 1 ? "" : "s") (\(ByteCountFormatter.string(fromByteCount: result.outputByteCount, countStyle: .file))).") }
+        do { let result = try await outputWriter.write(pages: pages, options: selectedProfile.options, destinationFolder: destinationOverride ?? destinationFolder); lastOutputs = result.outputURLs; lastOutputByteCount = result.outputByteCount; status = .idle; log("Exported \(result.pagesScanned) page\(result.pagesScanned == 1 ? "" : "s") (\(ByteCountFormatter.string(fromByteCount: result.outputByteCount, countStyle: .file))).") }
         catch { status = .error(error.localizedDescription); log("Export failed: \(error.localizedDescription)") }
     }
 

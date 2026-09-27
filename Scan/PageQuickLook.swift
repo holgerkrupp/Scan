@@ -1,6 +1,7 @@
 import AppKit
 import Observation
 import Quartz
+import UserNotifications
 
 /// Quick Look for the page grid, modelled on the Finder: the panel always
 /// previews the selected page (nothing when nothing is selected), follows the
@@ -102,6 +103,13 @@ final class PagePreviewItem: NSObject, QLPreviewItem {
 /// looks for a controller along the responder chain and finally asks the
 /// application delegate, which is the one stable object in a SwiftUI app.
 final class ScanAppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        _ = ScanNotificationService.shared
+        Task { @MainActor in await ScannerWorkspaceViewModel.shared.applicationDidLaunch() }
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
     override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
 
     override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {

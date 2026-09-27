@@ -4,6 +4,46 @@ The app separates scanner acquisition from image processing and export:
 
 `ScannerDiscovery` -> `ScannerDriver`/`ScannerDevice` -> `PageFrame` stream -> file-backed `ScanPageStore` -> `ScanImageProcessor` -> `ScanOutputWriter`.
 
+## Hardware buttons and one-touch scans
+
+Hardware input is an optional backend capability rather than a second scan
+pipeline. `ScannerHardwareEventSource` emits the common
+`scanButtonPressed`, `feederChanged`, and diagnostic events; the
+`HardwareScanCoordinator` owns the open/observe/close/retry lifecycle and maps
+button presses to the existing profile-driven `scanAndExport` job. Button
+edges are debounced by the polling backends, observation stops before a normal
+scan, and disconnected devices are retried after discovery changes and a
+short reconnect delay.
+
+The native Fujitsu backend polls the documented `GET HW STATUS` CDB
+(`0xc2`); byte 4 mask `0x21` represents the short tap and held state, and the
+hopper state is decoded from byte 3. The mapping is marked hardware-validated
+for S1500, S510M, iX500, and iX1600 profiles, and explicitly
+`supportedUnvalidated` for the other claimed Fujitsu profiles until a physical
+run confirms their panel wiring. The protocol reference is the public
+[s1500d protocol documentation](https://github.com/mmacpherson/s1500d/blob/main/docs/protocol.md).
+
+The S300 backend polls the SANE epjitsu `0x1b/0x33` status command and reports
+the button at byte 1 bit 0. It deliberately exposes button detection as
+experimental and does not start one-touch acquisition because calibrated S300
+image acquisition is not enabled. This distinction is visible in Settings and
+in the event capability metadata. The command mapping follows the public
+[SANE epjitsu backend](https://gitlab.com/sane-project/backends/-/tree/master/backend).
+
+Image Capture devices use `ICDeviceDelegate`'s button callback when macOS has
+selected Scan as the scanner's button target and an Image Capture session is
+open. Another application can own that target, so the UI reports this as
+supported-but-unvalidated and keeps manual scanning available. See Apple's
+[ImageCaptureCore device delegate documentation](https://developer.apple.com/documentation/imagecapturecore/icdevicedelegate).
+
+The Settings panel persists the feature disabled by default, a global profile,
+per-scanner profile overrides, security-scoped per-scanner destinations, and
+an optional launch-at-login choice. When enabled, the app can remain an
+accessory without a window, requests notification permission, posts success or
+failure notifications, and lets a notification reveal the first output in
+Finder. Unsupported backends remain usable for manual scans and emit a clear
+diagnostic instead of triggering an incomplete one-touch job.
+
 ## Settings and profiles
 
 `ScanOptions` contains `AcquisitionSettings`, `ImageProcessingSettings`, and `ExportSettings`. `ScanProfileStore` persists JSON profiles and the selected profile in `UserDefaults`. Destination folders are persisted as security-scoped bookmarks.

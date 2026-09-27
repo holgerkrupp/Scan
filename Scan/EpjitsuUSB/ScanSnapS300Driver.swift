@@ -30,7 +30,7 @@ struct FujitsuScanSnapS300Driver: ScannerDriver {
     }
 }
 
-final class FujitsuScanSnapS300Device: ScannerDevice {
+final class FujitsuScanSnapS300Device: ScannerDevice, ScannerHardwareEventSource {
     let identity: ScannerIdentity
     let capabilities = ScannerCapabilities(
         sources: [.adfFront, .adfBack, .adfDuplex],
@@ -49,6 +49,15 @@ final class FujitsuScanSnapS300Device: ScannerDevice {
     private let firmwareProvider: () throws -> Data?
     private var commandEngine: ScanSnapS300CommandEngine?
     private(set) var status: ScannerStatus = .disconnected
+    private var hardwareEventTask: Task<Void, Never>?
+
+    var hardwareEventCapabilities: ScannerHardwareEventCapabilities {
+        ScannerHardwareEventCapabilities(
+            scanButton: .supportedUnvalidated,
+            supportsOneTouchScanning: false,
+            detail: "SANE epjitsu GET STATUS 0x1b/0x33 reports the Scan button in byte 1 bit 0. Button detection is available, but S300 image acquisition remains experimental."
+        )
+    }
 
     init(
         identity: ScannerIdentity,
@@ -81,12 +90,14 @@ final class FujitsuScanSnapS300Device: ScannerDevice {
     }
 
     func close() async {
+        await stopHardwareEventObservation()
         await transport?.close()
         commandEngine = nil
         status = .disconnected
     }
 
     func startScan(options: ScanOptions) async throws -> AsyncThrowingStream<PageFrame, Error> {
+        await stopHardwareEventObservation()
         try capabilities.validate(options)
         guard commandEngine != nil else {
             throw ScannerError.transportUnavailable("Open the S300 before starting a scan.")
@@ -97,9 +108,61 @@ final class FujitsuScanSnapS300Device: ScannerDevice {
     }
 
     func cancel() async {
+        await stopHardwareEventObservation()
         await transport?.abort()
         await close()
         status = .idle
+    }
+
+    func startHardwareEventObservation() async throws -> AsyncStream<ScannerHardwareEvent> {
+        guard let commandEngine else {
+            throw ScannerError.transportUnavailable("Open and initialize the S300 before observing its hardware button.")
+        }
+        await stopHardwareEventObservation()
+        let stream = AsyncStream<ScannerHardwareEvent> { continuation in
+            self.hardwareEventTask = Task { [weak self] in
+                await self?.pollHardwareEvents(commandEngine: commandEngine, continuation: continuation)
+            }
+        }
+        ScanTrace.post("Listening for the experimental S300 Scan button event.")
+        return stream
+    }
+
+    func stopHardwareEventObservation() async {
+        let wasObserving = hardwareEventTask != nil
+        hardwareEventTask?.cancel()
+        hardwareEventTask = nil
+        if wasObserving { await transport?.abort() }
+    }
+
+    private func pollHardwareEvents(
+        commandEngine: ScanSnapS300CommandEngine,
+        continuation: AsyncStream<ScannerHardwareEvent>.Continuation
+    ) async {
+        var wasPressed = false
+        defer { continuation.finish() }
+        while !Task.isCancelled {
+            do {
+                let bytes = [UInt8](try await commandEngine.readHardwareStatus())
+                guard bytes.count >= 2 else {
+                    continuation.yield(.diagnostic("S300 returned a short hardware-status response."))
+                    return
+                }
+                let isPressed = (bytes[1] & 0x01) != 0
+                if isPressed, !wasPressed { continuation.yield(.scanButtonPressed) }
+                wasPressed = isPressed
+            } catch is CancellationError {
+                return
+            } catch {
+                continuation.yield(.diagnostic("S300 hardware-button observation stopped: \(error.localizedDescription)"))
+                return
+            }
+            do {
+                try await Task.sleep(nanoseconds: 100_000_000)
+            } catch {
+                return
+            }
+        }
     }
 }
 
@@ -142,6 +205,13 @@ final class ScanSnapS300CommandEngine {
         try await write([0x1b, 0x03])
         let response = try await readExactly(2, label: "status")
         return response[response.startIndex]
+    }
+
+    /// SANE epjitsu's GET HARDWARE STATUS command. The S300 returns four
+    /// bytes; byte 1 bit 0 is the physical Scan button.
+    func readHardwareStatus() async throws -> Data {
+        try await write([0x1b, 0x33])
+        return try await readExactly(4, label: "hardware status")
     }
 
     func readIdentity() async throws -> ScanSnapS300ProtocolIdentity {

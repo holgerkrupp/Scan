@@ -136,7 +136,7 @@ struct ImageCaptureScannerDriver: ScannerDriver {
     func makeDevice(identity: ScannerIdentity, transport: USBDeviceTransport?) -> ScannerDevice { ImageCaptureScannerDevice(identity: identity) }
 }
 
-final class ImageCaptureScannerDevice: NSObject, ScannerDevice, ICScannerDeviceDelegate {
+final class ImageCaptureScannerDevice: NSObject, ScannerDevice, ScannerHardwareEventSource, ICScannerDeviceDelegate {
     let identity: ScannerIdentity
     private(set) var capabilities: ScannerCapabilities
     private(set) var status: ScannerStatus = .disconnected
@@ -147,6 +147,15 @@ final class ImageCaptureScannerDevice: NSObject, ScannerDevice, ICScannerDeviceD
     private var cancelled = false
     private var activeSource: ScanSource?
     private var transferDirectory: URL?
+    private var hardwareEventContinuation: AsyncStream<ScannerHardwareEvent>.Continuation?
+
+    var hardwareEventCapabilities: ScannerHardwareEventCapabilities {
+        ScannerHardwareEventCapabilities(
+            scanButton: .supportedUnvalidated,
+            supportsOneTouchScanning: true,
+            detail: "ImageCaptureCore delivers device(_:didReceiveButtonPress:) only when macOS has routed the scanner button to Scan; another scanner app may own the device or button destination."
+        )
+    }
 
     init(identity: ScannerIdentity) {
         self.identity = identity
@@ -171,6 +180,7 @@ final class ImageCaptureScannerDevice: NSObject, ScannerDevice, ICScannerDeviceD
     }
 
     func close() async {
+        await stopHardwareEventObservation()
         guard let scanner else { return }
         if scanner.hasOpenSession { try? await scanner.requestCloseSession(options: nil) }
         scanner.delegate = nil
@@ -183,6 +193,7 @@ final class ImageCaptureScannerDevice: NSObject, ScannerDevice, ICScannerDeviceD
     }
 
     func startScan(options: ScanOptions) async throws -> AsyncThrowingStream<PageFrame, Error> {
+        await stopHardwareEventObservation()
         guard let scanner else { throw ScannerError.transportUnavailable("Image Capture scanner session is not open.") }
         let unit = try await select(functionalUnitFor: options.source, scanner: scanner)
         try validate(options: options, for: unit)
@@ -207,10 +218,26 @@ final class ImageCaptureScannerDevice: NSObject, ScannerDevice, ICScannerDeviceD
     }
 
     func cancel() async {
+        await stopHardwareEventObservation()
         cancelled = true
         scanner?.cancelScan()
         status = .idle
         finishScan(throwing: ScannerError.scanCancelled)
+    }
+
+    func startHardwareEventObservation() async throws -> AsyncStream<ScannerHardwareEvent> {
+        guard let scanner, scanner.hasOpenSession else {
+            throw ScannerError.transportUnavailable("Open the Image Capture scanner before observing its hardware button.")
+        }
+        await stopHardwareEventObservation()
+        return AsyncStream { continuation in
+            self.hardwareEventContinuation = continuation
+        }
+    }
+
+    func stopHardwareEventObservation() async {
+        hardwareEventContinuation?.finish()
+        hardwareEventContinuation = nil
     }
 
     func scannerDevice(_ scanner: ICScannerDevice, didScanTo url: URL) {
@@ -235,6 +262,11 @@ final class ImageCaptureScannerDevice: NSObject, ScannerDevice, ICScannerDeviceD
         if cancelled { finishScan(throwing: ScannerError.scanCancelled) }
         else if let error { status = .error(error.localizedDescription); finishScan(throwing: error) }
         else { finishScan() }
+    }
+
+    func device(_ device: ICDevice, didReceiveButtonPress buttonType: String) {
+        guard device === scanner else { return }
+        hardwareEventContinuation?.yield(.scanButtonPressed)
     }
 
     func scannerDevice(_ scanner: ICScannerDevice, didSelect functionalUnit: ICScannerFunctionalUnit, error: Error?) {

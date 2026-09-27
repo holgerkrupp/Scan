@@ -4,7 +4,7 @@ import Foundation
 /// Shared `ScannerDevice` for Fujitsu ScanSnap models that speak the Fujitsu
 /// SCSI-over-USB dialect. Model-specific behaviour is described by a
 /// `FujitsuScanSnapModelProfile`; the command engine below is common.
-final class FujitsuScanSnapDevice: ScannerDevice {
+final class FujitsuScanSnapDevice: ScannerDevice, ScannerHardwareEventSource {
     let identity: ScannerIdentity
     let profile: FujitsuScanSnapModelProfile
     var capabilities: ScannerCapabilities { profile.capabilities }
@@ -13,6 +13,15 @@ final class FujitsuScanSnapDevice: ScannerDevice {
     private var commandEngine: FujitsuSCSIOverUSBCommandEngine?
     private(set) var status: ScannerStatus = .disconnected
     private var isCancelled = false
+    private var hardwareEventTask: Task<Void, Never>?
+
+    var hardwareEventCapabilities: ScannerHardwareEventCapabilities {
+        ScannerHardwareEventCapabilities(
+            scanButton: profile.hardwareButtonSupport,
+            supportsOneTouchScanning: profile.hardwareButtonSupport != .unsupported,
+            detail: "GET HW STATUS byte 4 mask 0x21 (tap and held button); \(profile.hardwareButtonSupport.label)."
+        )
+    }
 
     init(identity: ScannerIdentity, transport: USBDeviceTransport?, profile: FujitsuScanSnapModelProfile) {
         self.identity = identity
@@ -44,6 +53,7 @@ final class FujitsuScanSnapDevice: ScannerDevice {
     }
 
     func close() async {
+        await stopHardwareEventObservation()
         ScanTrace.post("Closing USB session.")
         await transport?.close()
         commandEngine = nil
@@ -51,6 +61,7 @@ final class FujitsuScanSnapDevice: ScannerDevice {
     }
 
     func startScan(options: ScanOptions) async throws -> AsyncThrowingStream<PageFrame, Error> {
+        await stopHardwareEventObservation()
         try capabilities.validate(options)
         guard let commandEngine else {
             throw ScannerError.transportUnavailable("No USB transport was provided for \(identity.name).")
@@ -85,12 +96,80 @@ final class FujitsuScanSnapDevice: ScannerDevice {
     }
 
     func cancel() async {
+        await stopHardwareEventObservation()
         isCancelled = true
         ScanTrace.post("Aborting USB transfers.")
         await transport?.abort()
         try? await commandEngine?.cancel()
         await close()
         status = .idle
+    }
+
+    func startHardwareEventObservation() async throws -> AsyncStream<ScannerHardwareEvent> {
+        guard hardwareEventCapabilities.supportsButtonEvents else {
+            throw ScannerError.unsupportedOption("This scanner profile does not expose hardware-button events.")
+        }
+        guard let commandEngine else {
+            throw ScannerError.transportUnavailable("Open the scanner before observing its hardware button.")
+        }
+        await stopHardwareEventObservation()
+        let stream = AsyncStream<ScannerHardwareEvent> { continuation in
+            self.hardwareEventTask = Task { [weak self] in
+                await self?.pollHardwareEvents(commandEngine: commandEngine, continuation: continuation)
+            }
+        }
+        ScanTrace.post("Listening for the physical Scan button on \(identity.name).")
+        return stream
+    }
+
+    func stopHardwareEventObservation() async {
+        let wasObserving = hardwareEventTask != nil
+        hardwareEventTask?.cancel()
+        hardwareEventTask = nil
+        if wasObserving { await transport?.abort() }
+    }
+
+    private func pollHardwareEvents(
+        commandEngine: FujitsuSCSIOverUSBCommandEngine,
+        continuation: AsyncStream<ScannerHardwareEvent>.Continuation
+    ) async {
+        var previousButtonMask: UInt8 = 0
+        var previousPaperState: Bool?
+        defer { continuation.finish() }
+
+        while !Task.isCancelled {
+            do {
+                let data = try await commandEngine.readHardwareStatus()
+                let bytes = [UInt8](data)
+                guard bytes.count > profile.hardwareButtonStatusByte else {
+                    continuation.yield(.diagnostic("Scanner returned a short hardware-status response."))
+                    return
+                }
+                let buttonMask = bytes[profile.hardwareButtonStatusByte] & profile.hardwareButtonMask
+                if buttonMask != 0, previousButtonMask == 0 {
+                    continuation.yield(.scanButtonPressed)
+                }
+                previousButtonMask = buttonMask
+
+                if bytes.count > 3 {
+                    let hasPaper = (bytes[3] & 0x80) == 0
+                    if previousPaperState != nil, previousPaperState != hasPaper {
+                        continuation.yield(.feederChanged(hasPaper: hasPaper))
+                    }
+                    previousPaperState = hasPaper
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                continuation.yield(.diagnostic("Hardware-button observation stopped: \(error.localizedDescription)"))
+                return
+            }
+            do {
+                try await Task.sleep(nanoseconds: 100_000_000)
+            } catch {
+                return
+            }
+        }
     }
 }
 
@@ -493,13 +572,9 @@ private final class FujitsuSCSIOverUSBCommandEngine {
     /// so that the scanner's own no-documents sense still ends the batch.
     private func ensureHopperHasPaper() async throws {
         ScanTrace.post("Command: get hardware status.")
-        var command = [UInt8](repeating: 0, count: 10)
-        command[0] = 0xc2
-        Self.put(&command, offset: 7, value: 12, byteCount: 2)
-
         let data: Data
         do {
-            data = try await sendSCSICommand(command, expectedReadLength: 12, allowShortRead: true)
+            data = try await readHardwareStatus()
         } catch {
             ScanTrace.post("Hardware status was unavailable: \(error.localizedDescription).")
             return
@@ -515,6 +590,13 @@ private final class FujitsuSCSIOverUSBCommandEngine {
             ScanTrace.post("Hardware status reports an empty hopper.")
             throw ScannerError.feederEmpty
         }
+    }
+
+    func readHardwareStatus() async throws -> Data {
+        var command = [UInt8](repeating: 0, count: 10)
+        command[0] = 0xc2
+        Self.put(&command, offset: 7, value: 12, byteCount: 2)
+        return try await sendSCSICommand(command, expectedReadLength: 12, allowShortRead: true)
     }
 
     private func modeSelectAuto(plan: FujitsuScanPlan) async throws {

@@ -11,6 +11,42 @@ protocol ScannerDevice: AnyObject {
     func cancel() async
 }
 
+enum ScannerHardwareEvent: Equatable, Sendable {
+    case scanButtonPressed
+    case feederChanged(hasPaper: Bool)
+    case diagnostic(String)
+}
+
+enum ScannerHardwareEventSupportState: String, Codable, Sendable {
+    case unsupported
+    case supportedUnvalidated
+    case supportedValidated
+
+    var label: String {
+        switch self {
+        case .unsupported: "Not supported"
+        case .supportedUnvalidated: "Supported, not yet hardware-validated"
+        case .supportedValidated: "Supported and hardware-validated"
+        }
+    }
+}
+
+struct ScannerHardwareEventCapabilities: Equatable, Codable, Sendable {
+    let scanButton: ScannerHardwareEventSupportState
+    let supportsOneTouchScanning: Bool
+    let detail: String
+
+    var supportsButtonEvents: Bool { scanButton != .unsupported }
+}
+
+/// Optional event source implemented by backends that can observe a physical
+/// scanner button without coupling that protocol to the scan pipeline.
+protocol ScannerHardwareEventSource: AnyObject {
+    var hardwareEventCapabilities: ScannerHardwareEventCapabilities { get }
+    func startHardwareEventObservation() async throws -> AsyncStream<ScannerHardwareEvent>
+    func stopHardwareEventObservation() async
+}
+
 protocol ScannerDriver {
     var name: String { get }
     var supportedUSBDeviceIDs: Set<USBDeviceID> { get }

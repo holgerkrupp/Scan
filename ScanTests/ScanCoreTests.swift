@@ -52,6 +52,44 @@ final class ScanCoreTests: XCTestCase {
         XCTAssertEqual(store.load().first?.name, "Test profile"); XCTAssertEqual(store.load().first?.options.processing.paperCleanup, 0.65); XCTAssertEqual(store.selectedProfileID, profile.id)
     }
 
+    func testHardwareButtonSettingsPersistenceKeepsGlobalAndPerScannerOverrides() {
+        let defaults = UserDefaults(suiteName: "ScanHardwareSettingsTests-\(UUID().uuidString)")!
+        let store = HardwareButtonSettingsStore(defaults: defaults)
+        let identity = ScannerIdentity(name: "S1500", manufacturer: "Fujitsu", model: "S1500", serialNumber: "S1", connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x11a2), locationID: 1)
+        let profileID = UUID()
+        var settings = HardwareButtonSettings(enabled: true, launchAtLogin: true, defaultProfileID: profileID, perScannerProfileIDs: [identity.id: UUID()], perScannerDestinationBookmarks: [identity.id: Data([1, 2, 3])])
+        store.save(settings)
+
+        let loaded = store.load()
+        XCTAssertEqual(loaded, settings)
+        XCTAssertEqual(loaded.defaultProfileID, profileID)
+        XCTAssertEqual(loaded.perScannerProfileIDs[identity.id], settings.perScannerProfileIDs[identity.id])
+        XCTAssertEqual(loaded.perScannerDestinationBookmarks[identity.id], Data([1, 2, 3]))
+
+        settings.enabled = false
+        store.save(settings)
+        XCTAssertFalse(store.load().enabled)
+    }
+
+    func testNativeBackendsExposeButtonCapabilityStates() {
+        let s1500 = ScannerIdentity(name: "ScanSnap S1500", manufacturer: "Fujitsu", model: "S1500", serialNumber: nil, connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x11a2), locationID: 1)
+        let ix500 = ScannerIdentity(name: "ScanSnap iX500", manufacturer: "Fujitsu", model: "iX500", serialNumber: nil, connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x132b), locationID: 2)
+        let ix1500 = ScannerIdentity(name: "ScanSnap iX1500", manufacturer: "Fujitsu", model: "iX1500", serialNumber: nil, connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x159f), locationID: 3)
+        let s300 = ScannerIdentity(name: "ScanSnap S300", manufacturer: "Fujitsu", model: "S300", serialNumber: nil, connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x1156), locationID: 4)
+
+        let s1500Device = FujitsuScanSnapS1500Driver().makeDevice(identity: s1500, transport: nil) as! ScannerHardwareEventSource
+        let ix500Device = FujitsuScanSnapIX500Driver().makeDevice(identity: ix500, transport: nil) as! ScannerHardwareEventSource
+        let ix1500Device = FujitsuScanSnapIX1500Driver().makeDevice(identity: ix1500, transport: nil) as! ScannerHardwareEventSource
+        let s300Device = FujitsuScanSnapS300Driver(firmwareProvider: { nil }).makeDevice(identity: s300, transport: nil) as! ScannerHardwareEventSource
+
+        XCTAssertEqual(s1500Device.hardwareEventCapabilities.scanButton, .supportedValidated)
+        XCTAssertEqual(ix500Device.hardwareEventCapabilities.scanButton, .supportedValidated)
+        XCTAssertEqual(ix1500Device.hardwareEventCapabilities.scanButton, .supportedUnvalidated)
+        XCTAssertTrue(s1500Device.hardwareEventCapabilities.supportsOneTouchScanning)
+        XCTAssertEqual(s300Device.hardwareEventCapabilities.scanButton, .supportedUnvalidated)
+        XCTAssertFalse(s300Device.hardwareEventCapabilities.supportsOneTouchScanning)
+    }
+
     func testBlankPageDetectionAndJPEGDownsampling() throws {
         let blank = try makeFrame(pageIndex: 1, blank: true, width: 600, height: 800)
         let printed = try makeFrame(pageIndex: 2, blank: false, width: 600, height: 800)
@@ -219,6 +257,16 @@ final class ScanCoreTests: XCTestCase {
         XCTAssertEqual(writes[6], Data([0x80]))
         XCTAssertEqual(writes[7], Data([0x1b, 0x03]))
         XCTAssertEqual(writes[8], Data([0x1b, 0x13]))
+    }
+
+    func testS300HardwareStatusUsesEpjitsuButtonCommand() async throws {
+        let transport = ScriptedUSBTransport(reads: [Data([0x00, 0x01, 0x00, 0x00])])
+        let engine = ScanSnapS300CommandEngine(transport: transport)
+
+        let status = try await engine.readHardwareStatus()
+
+        XCTAssertEqual(status, Data([0x00, 0x01, 0x00, 0x00]))
+        XCTAssertEqual(transport.capturedWrites(), [Data([0x1b, 0x33])])
     }
 
     private func makeViewModel(discovery: ScannerDiscovery) throws -> ScannerWorkspaceViewModel {

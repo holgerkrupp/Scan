@@ -217,3 +217,50 @@ struct ScanProfileStore {
     func save(_ profiles: [ScanProfile]) { if let data = try? JSONEncoder().encode(profiles) { defaults.set(data, forKey: key) } }
     var selectedProfileID: UUID? { get { defaults.string(forKey: selectedKey).flatMap(UUID.init(uuidString:)) } set { defaults.set(newValue?.uuidString, forKey: selectedKey) } }
 }
+
+struct HardwareButtonSettings: Codable, Equatable, Sendable {
+    var enabled = false
+    var launchAtLogin = false
+    var defaultProfileID: UUID?
+    var perScannerProfileIDs: [String: UUID] = [:]
+    var perScannerDestinationBookmarks: [String: Data] = [:]
+}
+
+struct HardwareButtonSettingsStore {
+    private let defaults: UserDefaults
+    private let key = "scan.hardwareButtonSettings.v1"
+
+    init(defaults: UserDefaults) { self.defaults = defaults }
+
+    func load() -> HardwareButtonSettings {
+        guard let data = defaults.data(forKey: key),
+              let settings = try? JSONDecoder().decode(HardwareButtonSettings.self, from: data)
+        else { return HardwareButtonSettings() }
+        return settings
+    }
+
+    func save(_ settings: HardwareButtonSettings) {
+        guard let data = try? JSONEncoder().encode(settings) else { return }
+        defaults.set(data, forKey: key)
+    }
+
+    func destination(for identity: ScannerIdentity, settings: HardwareButtonSettings) -> URL? {
+        guard let data = settings.perScannerDestinationBookmarks[identity.id] else { return nil }
+        var stale = false
+        guard let url = try? URL(resolvingBookmarkData: data, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale) else { return nil }
+        if stale, let refreshed = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil) {
+            var updated = settings
+            updated.perScannerDestinationBookmarks[identity.id] = refreshed
+            save(updated)
+        }
+        _ = url.startAccessingSecurityScopedResource()
+        return url
+    }
+
+    func setDestination(_ url: URL, for identity: ScannerIdentity, settings: inout HardwareButtonSettings) throws {
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+        settings.perScannerDestinationBookmarks[identity.id] = try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+        save(settings)
+    }
+}
