@@ -250,4 +250,28 @@ final class FujitsuCommandTranscriptTests: XCTestCase {
         }
         await device.close()
     }
+
+    func testIX500DuplexReadRetriesTemporaryNoDataOnBothSides() async throws {
+        let scenario = Scenario("ix500-duplex-transient-read", source: .adfDuplex, mode: .color, dpi: 300, sheets: 1)
+        let transport = FujitsuScriptedTransport(
+            identity: Self.identity(productID: 0x132b),
+            pixelWidth: scenario.pixelWidth,
+            pixelHeight: 8,
+            sheets: 1,
+            temporaryNoDataReadsForFront: 1,
+            temporaryNoDataReadsForBack: 1
+        )
+        let device = FujitsuScanSnapIX500Driver().makeDevice(identity: Self.identity(productID: 0x132b), transport: transport)
+        try await device.open()
+
+        var pages = 0
+        let stream = try await device.startScan(options: scenario.options)
+        for try await _ in stream { pages += 1 }
+
+        XCTAssertEqual(pages, 2)
+        let wrapperPrefix = "W 43" + String(repeating: "00", count: 0x12)
+        let imageReads = transport.transcript.filter { $0.hasPrefix(wrapperPrefix + "280000") }
+        XCTAssertEqual(imageReads.count, 4, "Each side should be retried after its transient no-data response")
+        await device.close()
+    }
 }

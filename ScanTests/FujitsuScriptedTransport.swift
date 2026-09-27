@@ -26,16 +26,20 @@ final class FujitsuScriptedTransport: USBDeviceTransport, @unchecked Sendable {
     private var pendingStatus: UInt8 = 0
     private var pendingSense: (key: UInt8, asc: UInt8, ascq: UInt8)?
     private var imageRemaining: [Bool: Int] = [false: 0, true: 0]
+    private var temporaryNoDataReadsForFront: Int
+    private var temporaryNoDataReadsForBack: Int
     /// Answer `SEND` of the gamma table (data type 0x83) with ILLEGAL REQUEST,
     /// like a scanner whose A/D width does not match the table size.
     private let rejectsGammaTable: Bool
 
-    init(identity: ScannerIdentity, pixelWidth: Int, pixelHeight: Int, sheets: Int, rejectsGammaTable: Bool = false) {
+    init(identity: ScannerIdentity, pixelWidth: Int, pixelHeight: Int, sheets: Int, rejectsGammaTable: Bool = false, temporaryNoDataReadsForFront: Int = 0, temporaryNoDataReadsForBack: Int = 0) {
         self.identity = identity
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
         self.sheetsRemaining = sheets
         self.rejectsGammaTable = rejectsGammaTable
+        self.temporaryNoDataReadsForFront = temporaryNoDataReadsForFront
+        self.temporaryNoDataReadsForBack = temporaryNoDataReadsForBack
     }
 
     func open() async throws {
@@ -72,6 +76,9 @@ final class FujitsuScriptedTransport: USBDeviceTransport, @unchecked Sendable {
         if let data = pendingDataIn {
             pendingDataIn = nil
             return data.prefix(length)
+        }
+        if pendingStatus > 0, length > 13 {
+            throw ScannerError.transportUnavailable("Scripted image data phase failed.")
         }
         var status = Data(repeating: 0, count: 13)
         status[9] = pendingStatus
@@ -142,6 +149,21 @@ final class FujitsuScriptedTransport: USBDeviceTransport, @unchecked Sendable {
                 Self.put(&response, 4, pixelHeight, 4)
                 pendingDataIn = Data(response.prefix(length))
             } else {
+                let shouldReturnTemporaryNoData: Bool
+                if back, temporaryNoDataReadsForBack > 0 {
+                    temporaryNoDataReadsForBack -= 1
+                    shouldReturnTemporaryNoData = true
+                } else if !back, temporaryNoDataReadsForFront > 0 {
+                    temporaryNoDataReadsForFront -= 1
+                    shouldReturnTemporaryNoData = true
+                } else {
+                    shouldReturnTemporaryNoData = false
+                }
+                if shouldReturnTemporaryNoData {
+                    pendingStatus = 2
+                    pendingSense = (0x03, 0x80, 0x13)
+                    return
+                }
                 let available = imageRemaining[back] ?? 0
                 let count = min(length, available)
                 imageRemaining[back] = available - count

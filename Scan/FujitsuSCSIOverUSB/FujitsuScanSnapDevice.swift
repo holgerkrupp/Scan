@@ -1027,7 +1027,17 @@ private final class FujitsuSCSIOverUSBCommandEngine {
             ScanTrace.post("Command: read \(state.side.rawValue) image CDB \(Self.hex(command)).")
         }
 
-        let chunk = try await sendSCSICommand(command, expectedReadLength: length, allowShortRead: true)
+        let chunk: Data
+        do {
+            chunk = try await sendSCSICommand(command, expectedReadLength: length, allowShortRead: true)
+        } catch let error as FujitsuSCSIStatusError where error.isTemporaryNoData || error.isBusy {
+            // Read-image-count is only a readiness hint.  Fujitsu scanners can
+            // still report their transient "no data yet" sense on the actual
+            // READ, especially when the front and back duplex streams are
+            // drained in alternation.  Keep the state unfinished so the outer
+            // duplex loop retries after its normal poll delay.
+            return false
+        }
         state.data.append(chunk)
         state.remaining = max(0, state.remaining - chunk.count)
         if chunk.isEmpty || chunk.count < length || state.remaining == 0 {
