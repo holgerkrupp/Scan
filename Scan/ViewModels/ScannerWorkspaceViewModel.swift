@@ -172,6 +172,26 @@ actor ScanPageStore {
         folder = FileManager.default.temporaryDirectory.appendingPathComponent("Scan-\(UUID().uuidString)", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
     }
+
+    func appendRaw(_ frame: PageFrame) throws -> RawPage {
+        let url = folder.appendingPathComponent("Raw \(Self.baseName(for: frame))").appendingPathExtension(Self.fileExtension(for: frame.pixelFormat))
+        try frame.data.write(to: url, options: .atomic)
+        return RawPage(frame: frame, fileURL: url)
+    }
+
+    /// Writes the processed rendition of a raw page. Named and typed like a
+    /// document so Quick Look shows a readable title and picks the image previewer.
+    func writeProcessed(_ frame: PageFrame) throws -> StoredPage {
+        let url = folder.appendingPathComponent("Page \(Self.baseName(for: frame))").appendingPathExtension(Self.fileExtension(for: frame.pixelFormat))
+        try frame.data.write(to: url, options: .atomic)
+        return StoredPage(frame: frame, fileURL: url)
+    }
+
+    private static func baseName(for frame: PageFrame) -> String {
+        "\(frame.pageIndex)\(frame.side == .unknown ? "" : " \(frame.side.rawValue)") \(frame.id.uuidString.prefix(8))"
+    }
+
+    // Kept for callers that use ScanPageStore directly (for example, Quick Look tests).
     func append(_ frame: PageFrame) throws -> StoredPage {
         // Named and typed like a document so Quick Look shows a readable title
         // and picks the image previewer.
@@ -609,8 +629,24 @@ final class ScannerWorkspaceViewModel {
         selectedPageID = pages[index].id
     }
 
-    func deleteSelectedPage() async { guard let id = selectedPageID, let index = pages.firstIndex(where: { $0.id == id }) else { return }; pages.remove(at: index); selectedPageID = pages.isEmpty ? nil : pages[min(index, pages.count - 1)].id; log("Deleted page.") }
-    func movePage(from source: IndexSet, to destination: Int) { pages.move(fromOffsets: source, toOffset: destination) }
+    func deleteSelectedPage() async {
+        guard let id = selectedPageID, let visibleIndex = pages.firstIndex(where: { $0.id == id }) else { return }
+        rawPages.removeAll { $0.id == id }
+        processedPages[id] = nil
+        pageEdits[id] = nil
+        blankPageIDs.remove(id)
+        selectedPageID = pages.isEmpty ? nil : pages[min(visibleIndex, pages.count - 1)].id
+        log("Deleted page.")
+    }
+    func movePage(from source: IndexSet, to destination: Int) {
+        var visibleIDs = pages.map(\.id)
+        visibleIDs.move(fromOffsets: source, toOffset: destination)
+
+        var reorderedVisiblePages = visibleIDs.compactMap { id in rawPages.first { $0.id == id } }
+        for index in rawPages.indices where processedPages[rawPages[index].id] != nil {
+            rawPages[index] = reorderedVisiblePages.removeFirst()
+        }
+    }
 
     func rotateSelectedPage() async {
         guard let id = selectedPageID, let raw = rawPages.first(where: { $0.id == id }) else { return }

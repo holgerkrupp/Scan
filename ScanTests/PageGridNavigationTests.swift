@@ -81,12 +81,12 @@ final class PageQuickLookTests: XCTestCase {
         controller.workspace = workspace
         XCTAssertEqual(controller.numberOfPreviewItems(in: nil), 0)
 
-        let store = ScanPageStore()
-        defer { Task { await store.clear() } }
-        let page = try await store.append(PageFrame(pageIndex: 2, side: .back, pixelFormat: .jpeg, width: 8, height: 8, resolutionDPI: 300, data: Data([0xff, 0xd8, 0xff, 0xd9])))
-        workspace.pages = [page]
+        try await workspace.ingest(PageFrame(pageIndex: 2, side: .back, pixelFormat: .jpeg, width: 8, height: 8, resolutionDPI: 300, data: Data([0xff, 0xd8, 0xff, 0xd9])))
+        await workspace.waitForProcessing()
+        workspace.selectedPageID = nil
         XCTAssertEqual(controller.numberOfPreviewItems(in: nil), 0, "nothing selected, nothing previewed")
 
+        let page = try XCTUnwrap(workspace.pages.first)
         workspace.selectedPageID = page.id
         XCTAssertEqual(controller.numberOfPreviewItems(in: nil), 1)
         let item = try XCTUnwrap(controller.previewPanel(nil, previewItemAt: 0) as? PagePreviewItem)
