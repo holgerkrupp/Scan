@@ -34,7 +34,7 @@ struct ScanSettingsView: View {
             }
 
             Section("Hardware Button / One-Touch Scan") {
-                Toggle("Enable physical Scan button", isOn: Binding(
+                Toggle("Use physical Scan button", isOn: Binding(
                     get: { viewModel.hardwareButtonEnabled },
                     set: { viewModel.setHardwareButtonEnabled($0) }
                 ))

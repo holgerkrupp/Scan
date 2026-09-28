@@ -36,9 +36,9 @@ open. Another application can own that target, so the UI reports this as
 supported-but-unvalidated and keeps manual scanning available. See Apple's
 [ImageCaptureCore device delegate documentation](https://developer.apple.com/documentation/imagecapturecore/icdevicedelegate).
 
-The Settings panel persists the feature disabled by default, a global profile,
+The Settings panel persists the feature enabled by default, a global profile,
 per-scanner profile overrides, security-scoped per-scanner destinations, and
-an optional launch-at-login choice. When enabled, the app can remain an
+an optional launch-at-login choice. Users can explicitly opt out. When enabled, the app can remain an
 accessory without a window, requests notification permission, posts success or
 failure notifications, and lets a notification reveal the first output in
 Finder. Unsupported backends remain usable for manual scans and emit a clear

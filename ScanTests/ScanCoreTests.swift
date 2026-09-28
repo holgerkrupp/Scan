@@ -71,6 +71,18 @@ final class ScanCoreTests: XCTestCase {
         XCTAssertFalse(store.load().enabled)
     }
 
+    func testHardwareButtonSettingsDefaultToOptOutOnlyWhenExplicitlyDisabled() {
+        let defaults = UserDefaults(suiteName: "ScanHardwareDefaultTests-\(UUID().uuidString)")!
+        let store = HardwareButtonSettingsStore(defaults: defaults)
+
+        XCTAssertTrue(store.load().enabled)
+
+        var settings = store.load()
+        settings.enabled = false
+        store.save(settings)
+        XCTAssertFalse(store.load().enabled)
+    }
+
     func testNativeBackendsExposeButtonCapabilityStates() {
         let s1500 = ScannerIdentity(name: "ScanSnap S1500", manufacturer: "Fujitsu", model: "S1500", serialNumber: nil, connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x11a2), locationID: 1)
         let ix500 = ScannerIdentity(name: "ScanSnap iX500", manufacturer: "Fujitsu", model: "iX500", serialNumber: nil, connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x132b), locationID: 2)

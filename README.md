@@ -24,10 +24,10 @@ The same actions are also available from the app's **Scan** menu: Scan Document
 
 ## Hardware button / one-touch scanning
 
-Enable **Physical Scan button** in Settings to let supported scanners start the
-existing profile-driven scan and export pipeline. The setting is off by
-default and supports a global profile, per-scanner profile and destination
-overrides, optional launch at login, reconnect retry, and completion/failure
+Supported scanners use the physical Scan button by default; turn off **Use
+physical Scan button** in Settings to opt out. The setting persists and
+supports a global profile, per-scanner profile and destination overrides,
+optional launch at login, reconnect retry, and completion/failure
 notifications. Native Fujitsu button polling is validated on the S1500, S510M,
 iX500, and iX1600; other Fujitsu profiles are explicitly marked unvalidated.
 The S300 reports its physical button experimentally, but one-touch acquisition

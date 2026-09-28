@@ -219,7 +219,9 @@ struct ScanProfileStore {
 }
 
 struct HardwareButtonSettings: Codable, Equatable, Sendable {
-    var enabled = false
+    /// New installations monitor supported scanner buttons by default. A
+    /// saved `false` remains an explicit opt-out across launches.
+    var enabled = true
     var launchAtLogin = false
     var defaultProfileID: UUID?
     var perScannerProfileIDs: [String: UUID] = [:]
