@@ -38,7 +38,7 @@ struct ScanProfileEntityQuery: EntityQuery {
     }
 }
 
-struct ScanDocumentIntent: AppIntent, LongRunningIntent {
+struct ScanDocumentIntent: AppIntent {
     static var title: LocalizedStringResource = "Scan Document"
     static var description = IntentDescription("Scans a document with a saved profile and returns the exported files.")
     static var openAppWhenRun = true

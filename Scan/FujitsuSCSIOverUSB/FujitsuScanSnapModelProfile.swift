@@ -191,6 +191,42 @@ struct FujitsuScanSnapModelProfile: Sendable {
         )
     }
 
+    /// Fujitsu ScanSnap S1300i (USB 0x04c5/0x128d). SANE's `fujitsu` backend
+    /// drives it with the same iX500-era quirks: diagnostic pre-read mode,
+    /// JPEG quantisation table, hopper check before feed, no TEST UNIT READY
+    /// after OBJECT POSITION, software-emulated grayscale and line-art, and
+    /// colour-width rounding to a multiple of 2. Not yet validated on hardware.
+    static let s1300i = FujitsuScanSnapModelProfile(
+        name: "Fujitsu ScanSnap S1300i",
+        usbDeviceIDs: [USBDeviceID(vendorID: 0x04c5, productID: 0x128d)],
+        capabilities: ScannerCapabilities(
+            sources: [.adfFront, .adfBack, .adfDuplex],
+            colorModes: [.color, .gray, .lineart],
+            resolutionsDPI: [150, 200, 300, 600],
+            supportsBlankPageRemoval: true,
+            supportsDeskew: true,
+            supportsAutoCrop: true,
+            supportsDuplex: true
+        ),
+        sendsDiagnosticPreread: true,
+        sendsJPEGQuantizationTable: true,
+        checksHopperBeforeFirstFeed: true,
+        waitsForReadyAfterFeed: false,
+        emulatesMonochromeInSoftware: true,
+        pixelsPerLineModulus: 2,
+        // Never used: the S1300i is always asked for colour.
+        lineartPixelsPerLineModulus: 2,
+        probesColorInterlace: true,
+        toleratesModeSelectFailures: true,
+        toleratesGammaTableFailure: false,
+        usesSANECancelFlow: false,
+        usesInternalGammaTable: false,
+        transferChunkSize: 256 * 1024,
+        // SANE forces adbits = 8 for the iX500 family; the S1300i shares
+        // the same generation and is assumed to behave identically.
+        lookupTableInputBits: 8
+    )
+
     /// Fujitsu ScanSnap iX500 (USB 0x132b) and iX500EE (0x13f3). Quirks
     /// follow SANE `fujitsu.c` `init_model()`: `need_q_table`,
     /// `need_diag_preread`, `ppl_mod_by_mode[COLOR] = 2`, `hopper_before_op`,
