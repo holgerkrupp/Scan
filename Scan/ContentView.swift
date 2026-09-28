@@ -51,9 +51,20 @@ struct ContentView: View {
 
     private var preview: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack { Text("Pages").font(.title2.weight(.semibold)); Spacer(); Text("\(viewModel.pages.count) page\(viewModel.pages.count == 1 ? "" : "s")").foregroundStyle(.secondary) }
+            HStack {
+                Text("Pages").font(.title2.weight(.semibold))
+                Spacer()
+                if viewModel.pendingProcessingCount > 0 { ProgressView().controlSize(.small); Text("Processing \(viewModel.pendingProcessingCount)…").foregroundStyle(.secondary) }
+                Text("\(viewModel.pages.count) page\(viewModel.pages.count == 1 ? "" : "s")\(viewModel.hiddenBlankPageCount > 0 ? " · \(viewModel.hiddenBlankPageCount) blank hidden" : "")").foregroundStyle(.secondary)
+            }
             if viewModel.pages.isEmpty {
-                ContentUnavailableView("No pages yet", systemImage: "doc.viewfinder", description: Text("Scan a document to review pages before exporting."))
+                if viewModel.pendingProcessingCount > 0 {
+                    ContentUnavailableView("Processing pages…", systemImage: "doc.viewfinder")
+                } else if viewModel.hiddenBlankPageCount > 0 {
+                    ContentUnavailableView("Only blank pages", systemImage: "doc", description: Text("Every scanned page was found blank. Turn off blank-page removal to see them."))
+                } else {
+                    ContentUnavailableView("No pages yet", systemImage: "doc.viewfinder", description: Text("Scan a document to review pages before exporting."))
+                }
             } else {
                 pageGrid
             }
@@ -194,6 +205,10 @@ struct ContentView: View {
                 Toggle("Automatically save after scanning", isOn: profile(\.options.export.automaticallySaveAfterScanning))
             }
             Section("Processing") {
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("Whiten paper", isOn: profile(\.options.processing.whitenPaper))
+                    Text("Measures each page's paper tone and stretches it to white, as ScanSnap Home does; black stays black.").font(.caption).foregroundStyle(.secondary)
+                }
                 VStack(alignment: .leading, spacing: 5) {
                     LabeledContent("Paper cleanup") {
                         Text(paperCleanupLabel)
@@ -212,8 +227,14 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                 }
                 capabilityToggle("Remove blank pages", value: profile(\.options.processing.removeBlankPages), supported: viewModel.capabilities?.supportsBlankPageRemoval ?? false, reason: "The selected backend does not expose blank-page processing.")
-                capabilityToggle("Auto-crop", value: profile(\.options.processing.autoCrop), supported: viewModel.capabilities?.supportsAutoCrop ?? false, reason: "Software crop is unavailable for this backend.")
-                capabilityToggle("Deskew", value: profile(\.options.processing.deskew), supported: viewModel.capabilities?.supportsDeskew ?? false, reason: "Software deskew is unavailable for this backend.")
+                VStack(alignment: .leading, spacing: 4) {
+                    capabilityToggle("Deskew and crop to page", value: profile(\.options.processing.deskew), supported: viewModel.capabilities?.supportsDeskew ?? false, reason: "Software deskew is unavailable for this backend.")
+                    Text("Straightens skewed sheets and crops away the paper edges, like ScanSnap Home. Also available as Edit > Auto-Align Page.").font(.caption).foregroundStyle(.secondary)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    capabilityToggle("Crop to content", value: profile(\.options.processing.autoCrop), supported: viewModel.capabilities?.supportsAutoCrop ?? false, reason: "Software crop is unavailable for this backend.")
+                    Text("Trims the paper margins down to the printed content, for receipts and clippings.").font(.caption).foregroundStyle(.secondary)
+                }
                 capabilityToggle("Automatic orientation", value: profile(\.options.processing.autoRotate), supported: viewModel.capabilities?.supportsAutoRotate ?? false, reason: "Automatic orientation is unavailable for this backend.")
             }
             Section("Diagnostics") {

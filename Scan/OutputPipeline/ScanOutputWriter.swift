@@ -9,8 +9,10 @@ final class ScanOutputWriter {
         return try await writeProcessed(processed, options: options, destinationFolder: destinationFolder)
     }
 
-    /// File-backed pages are read and processed one at a time. This is the path used
-    /// by the workspace after a scan, so large feeder batches do not stay resident.
+    /// File-backed pages are read one at a time, so large feeder batches do not
+    /// stay resident. This is the workspace's path: the pages are already
+    /// processed renditions, so only the output resolution and compression are
+    /// applied here and the export matches what the grid shows.
     func write(pages: [StoredPage], options: ScanOptions, destinationFolder: URL) async throws -> ScanJobResult {
         try FileManager.default.createDirectory(at: destinationFolder, withIntermediateDirectories: true)
         let date = Self.dateFormatter.string(from: Date())
@@ -29,7 +31,7 @@ final class ScanOutputWriter {
                 }
                 context.closePDF()
             } catch { context.closePDF(); try? FileManager.default.removeItem(at: url); throw error }
-            guard count > 0 else { try? FileManager.default.removeItem(at: url); throw ScannerError.outputFailed("No non-blank pages were received from the scanner.") }
+            guard count > 0 else { try? FileManager.default.removeItem(at: url); throw ScannerError.outputFailed("There are no pages to export.") }
             return ScanJobResult(outputURLs: [url], pagesScanned: count, outputByteCount: fileSize(url))
         }
 
@@ -53,7 +55,7 @@ final class ScanOutputWriter {
 
     private func process(_ page: StoredPage, options: ScanOptions) throws -> PageFrame? {
         let frame = PageFrame(id: page.id, pageIndex: page.pageIndex, side: page.side, pixelFormat: page.pixelFormat, width: page.width, height: page.height, resolutionDPI: page.resolutionDPI, data: try Data(contentsOf: page.fileURL, options: .mappedIfSafe))
-        return try ScanImageProcessor.process(frame, settings: options.processing, outputDPI: options.export.outputDPI)
+        return try ScanImageProcessor.process(frame, settings: ImageProcessingSettings(), outputDPI: options.export.outputDPI)
     }
 
     private func decode(_ frame: PageFrame, quality: Double = 1.0) throws -> CGImage {
