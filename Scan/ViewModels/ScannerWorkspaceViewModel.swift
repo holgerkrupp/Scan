@@ -227,7 +227,7 @@ final class ScannerWorkspaceViewModel {
     static let shared = ScannerWorkspaceViewModel()
 
     var discoveredIdentities: [ScannerIdentity] = []
-    var selectedIdentity: ScannerIdentity? { didSet { updateCapabilities() } }
+    var selectedIdentity: ScannerIdentity? { didSet { updateCapabilities(); refreshEpjitsuFirmwareSelection() } }
     var selectedProfile: ScanProfile
     var profiles: [ScanProfile]
     var capabilities: ScannerCapabilities?
@@ -261,7 +261,7 @@ final class ScannerWorkspaceViewModel {
     var isScanning = false
     var diagnosticsExpanded = false
     var isCancelRequested = false
-    var s300FirmwareFilename: String?
+    var epjitsuFirmwareFilename: String?
     var hardwareButtonSettings: HardwareButtonSettings
     var hardwareButtonCapabilities: ScannerHardwareEventCapabilities?
     var hardwareButtonStatusMessage: String?
@@ -273,7 +273,6 @@ final class ScannerWorkspaceViewModel {
     private var activeDevice: ScannerDevice?
     private var pageStore: ScanPageStore?
     private var traceObserver: NSObjectProtocol?
-    private let s300FirmwareStore: ScanSnapS300FirmwareStore
     private let automaticRefreshDelay: Duration
     private var automaticRefreshTask: Task<Void, Never>?
     private let hardwareSettingsStore: HardwareButtonSettingsStore
@@ -291,9 +290,7 @@ final class ScannerWorkspaceViewModel {
         let hardwareStore = HardwareButtonSettingsStore(defaults: .standard)
         self.hardwareSettingsStore = hardwareStore
         self.hardwareButtonSettings = hardwareStore.load()
-        let firmwareStore = ScanSnapS300FirmwareStore(defaults: .standard)
-        self.s300FirmwareStore = firmwareStore
-        self.s300FirmwareFilename = firmwareStore.selectedFilename
+        self.epjitsuFirmwareFilename = nil
         let loadedProfiles = profileStore.load()
         self.profiles = loadedProfiles
         let selectedID = profileStore.selectedProfileID
@@ -497,9 +494,21 @@ final class ScannerWorkspaceViewModel {
 
     func capabilities(for identity: ScannerIdentity) -> ScannerCapabilities? { registry.capabilities(for: identity) }
 
-    var selectedScannerUsesS300Protocol: Bool {
+    var selectedScannerUsesEpjitsuProtocol: Bool {
         guard let deviceID = selectedIdentity?.usbDeviceID else { return false }
-        return FujitsuScanSnapS300Driver(firmwareProvider: { nil }).supportedUSBDeviceIDs.contains(deviceID)
+        return EpjitsuScanSnapModelProfile.profile(for: deviceID) != nil
+    }
+
+    var selectedEpjitsuProfile: EpjitsuScanSnapModelProfile? {
+        selectedIdentity?.usbDeviceID.flatMap(EpjitsuScanSnapModelProfile.profile(for:))
+    }
+
+    func refreshEpjitsuFirmwareSelection() {
+        guard let profile = selectedEpjitsuProfile else {
+            epjitsuFirmwareFilename = nil
+            return
+        }
+        epjitsuFirmwareFilename = EpjitsuScanSnapFirmwareStore(profile: profile, defaults: .standard).selectedFilename
     }
 
     func chooseDestination() {
@@ -513,22 +522,23 @@ final class ScannerWorkspaceViewModel {
         }
     }
 
-    func chooseS300Firmware() {
+    func chooseEpjitsuFirmware() {
+        guard let profile = selectedEpjitsuProfile else { return }
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.title = "Choose ScanSnap S300 Firmware"
-        panel.message = "Select 300_0C00.nal for an S300 or 300M_0C00.nal for an S300M. The app stores only a security-scoped bookmark."
+        panel.title = "Choose \(profile.name) Firmware"
+        panel.message = "Select \(profile.expectedFirmwareFileNames.joined(separator: " or ")). The app stores a model-specific security-scoped bookmark."
         panel.prompt = "Use Firmware"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            try s300FirmwareStore.saveFirmware(at: url)
-            s300FirmwareFilename = url.lastPathComponent
-            log("S300 firmware selected: \(url.lastPathComponent).")
+            try EpjitsuScanSnapFirmwareStore(profile: profile, defaults: .standard).saveFirmware(at: url)
+            epjitsuFirmwareFilename = url.lastPathComponent
+            log("\(profile.name) firmware selected: \(url.lastPathComponent).")
         } catch {
             status = .error(error.localizedDescription)
-            log("Could not use S300 firmware: \(error.localizedDescription)")
+            log("Could not use \(profile.name) firmware: \(error.localizedDescription)")
         }
     }
 

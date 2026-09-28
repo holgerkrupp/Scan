@@ -92,7 +92,8 @@ The native Fujitsu USB backends recognize the following models:
 
 | Scanner | USB product ID | Status |
 | --- | --- | --- |
-| ScanSnap S300 / S300M (experimental) | `0x1156` / `0x117f` | Firmware bootstrap only, no image acquisition yet |
+| ScanSnap S300 / S300M (epjitsu, experimental) | `0x1156` / `0x117f` | Firmware bootstrap/status/identity only, no calibrated image acquisition yet |
+| ScanSnap S1300 / S1300i (epjitsu, preliminary) | `0x11ed` / `0x128d` | Firmware bootstrap/status/identity only; button support unvalidated; no image acquisition yet |
 | ScanSnap S500 / S500M | `0x10fe` / `0x1135` | Protocol profile (S1500 command flow), not yet validated on hardware |
 | ScanSnap S510 / S510M | `0x1155` / `0x116f` | Validated on S510M hardware: duplex color at 300 dpi; optional buffer-page rejection and BGR interlace handled |
 | ScanSnap S1500 / S1500M | `0x11a2` | Validated on hardware |
@@ -166,16 +167,18 @@ this app with the same scanner.
 
 Hardware validation runs are opt-in: see `ScanTests/FujitsuScanSnapHardwareTests.swift`.
 
-The S300/S300M use a separate direct bulk-USB protocol. This app recognizes
-both devices and implements their firmware-status, upload, reinitialization,
-and identity exchanges. Fujitsu's `300_0C00.nal` / `300M_0C00.nal` firmware is
-copyrighted and cannot be included; select a firmware file under Diagnostics.
-Calibrated image acquisition is not enabled yet, so this backend is explicitly
-experimental rather than production scan support. The protocol work is based
-on the public [SANE epjitsu backend](https://gitlab.com/sane-project/backends/-/tree/master/backend)
+The S300/S300M/S1300/S1300i are one direct bulk-USB family handled by the
+experimental epjitsu backend. This protocol is separate from the Fujitsu
+SCSI-over-USB backend used by the iX-series and older S1500-family drivers;
+the S1300i must not be routed through that backend. The epjitsu driver
+implements firmware-status, user-supplied firmware upload/checksum,
+reinitialization, identity, and the common hardware-status exchange. Firmware
+is model-specific (`300_0C00.nal`, `300M_0C00.nal`, `1300_0C26.nal`, or
+`1300i_0D12.nal`), copyrighted, and never bundled; select it under Diagnostics.
+Calibrated image acquisition is not enabled yet, and S1300/S1300i button
+interpretation is unvalidated, so these are preliminary rather than production
+scan support. S1100/S1100i are not claimed.
+
+The protocol work is based on the public [SANE epjitsu backend](https://gitlab.com/sane-project/backends/-/tree/master/backend)
 and its [device documentation](https://www.sane-project.org/man/sane-epjitsu.5.html),
 without incorporating the GPL implementation into this MIT-licensed project.
-
-The S1300/S1300i and S1100/S1100i families are intentionally not claimed by
-the native backend yet: they use a different Fujitsu protocol and need a
-separate driver rather than another USB-ID alias.

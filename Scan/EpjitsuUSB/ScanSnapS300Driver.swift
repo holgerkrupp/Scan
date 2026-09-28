@@ -1,71 +1,181 @@
 import Foundation
 
-/// Native, direct-bulk USB support for the ScanSnap S300 family.
+/// The direct-bulk USB ScanSnap family described by SANE's `epjitsu` backend.
 ///
-/// The wire-level bootstrap sequence is independently implemented from the
-/// public protocol behavior documented by SANE's `epjitsu` backend. The
-/// scanner firmware remains Fujitsu's copyrighted software and is never
-/// bundled with this app.
-struct FujitsuScanSnapS300Driver: ScannerDriver {
-    let name = "Fujitsu ScanSnap S300 direct USB (experimental)"
-    let supportedUSBDeviceIDs: Set<USBDeviceID> = [
-        USBDeviceID(vendorID: 0x04c5, productID: 0x1156), // S300
-        USBDeviceID(vendorID: 0x04c5, productID: 0x117f)  // S300M
-    ]
+/// This is an independent Swift implementation of the observable bootstrap
+/// protocol. Fujitsu firmware is copyrighted and is never bundled here.
+enum EpjitsuHardwareButtonInterpretation: Equatable, Sendable {
+    case s300Byte1Bit0
+    case unvalidated
+}
 
-    private let firmwareProvider: () throws -> Data?
+/// Model data belongs here rather than in the protocol engine. That keeps the
+/// common bootstrap/status path ready for additional epjitsu models without
+/// making the engine guess from a display name.
+struct EpjitsuScanSnapModelProfile: Equatable, Sendable {
+    let name: String
+    let usbDeviceIDs: Set<USBDeviceID>
+    let expectedFirmwareFileNames: [String]
+    let firmwareBookmarkKey: String
+    let capabilities: ScannerCapabilities
+    let supportsDuplex: Bool
+    let hardwareButtonSupport: ScannerHardwareEventSupportState
+    let supportsOneTouchScanning: Bool
+    let hardwareButtonInterpretation: EpjitsuHardwareButtonInterpretation
+    let hardwareStatusResponseLength: Int
 
-    init(firmwareProvider: @escaping () throws -> Data? = {
-        try ScanSnapS300FirmwareStore(defaults: .standard).loadFirmwarePayload()
-    }) {
-        self.firmwareProvider = firmwareProvider
+    static let s300 = EpjitsuScanSnapModelProfile(
+        name: "Fujitsu ScanSnap S300",
+        usbDeviceIDs: [USBDeviceID(vendorID: 0x04c5, productID: 0x1156)],
+        expectedFirmwareFileNames: ["300_0C00.nal"],
+        firmwareBookmarkKey: "scan.epjitsu.s300FirmwareBookmark",
+        supportsDuplex: true,
+        hardwareButtonSupport: .supportedUnvalidated,
+        supportsOneTouchScanning: false,
+        hardwareButtonInterpretation: .s300Byte1Bit0
+    )
+
+    static let s300M = EpjitsuScanSnapModelProfile(
+        name: "Fujitsu ScanSnap S300M",
+        usbDeviceIDs: [USBDeviceID(vendorID: 0x04c5, productID: 0x117f)],
+        expectedFirmwareFileNames: ["300M_0C00.nal"],
+        firmwareBookmarkKey: "scan.epjitsu.s300MFirmwareBookmark",
+        supportsDuplex: true,
+        hardwareButtonSupport: .supportedUnvalidated,
+        supportsOneTouchScanning: false,
+        hardwareButtonInterpretation: .s300Byte1Bit0
+    )
+
+    static let s1300 = EpjitsuScanSnapModelProfile(
+        name: "Fujitsu ScanSnap S1300",
+        usbDeviceIDs: [USBDeviceID(vendorID: 0x04c5, productID: 0x11ed)],
+        expectedFirmwareFileNames: ["1300_0C26.nal"],
+        firmwareBookmarkKey: "scan.epjitsu.s1300FirmwareBookmark",
+        supportsDuplex: true,
+        hardwareButtonSupport: .supportedUnvalidated,
+        supportsOneTouchScanning: false,
+        hardwareButtonInterpretation: .unvalidated
+    )
+
+    static let s1300i = EpjitsuScanSnapModelProfile(
+        name: "Fujitsu ScanSnap S1300i",
+        usbDeviceIDs: [USBDeviceID(vendorID: 0x04c5, productID: 0x128d)],
+        expectedFirmwareFileNames: ["1300i_0D12.nal"],
+        firmwareBookmarkKey: "scan.epjitsu.s1300iFirmwareBookmark",
+        supportsDuplex: true,
+        hardwareButtonSupport: .supportedUnvalidated,
+        supportsOneTouchScanning: false,
+        hardwareButtonInterpretation: .unvalidated
+    )
+
+    static let all: [EpjitsuScanSnapModelProfile] = [.s300, .s300M, .s1300, .s1300i]
+
+    nonisolated static func profile(for usbDeviceID: USBDeviceID) -> EpjitsuScanSnapModelProfile? {
+        all.first { $0.usbDeviceIDs.contains(usbDeviceID) }
     }
 
-    func makeDevice(identity: ScannerIdentity, transport: USBDeviceTransport?) -> ScannerDevice {
-        FujitsuScanSnapS300Device(
-            identity: identity,
-            transport: transport,
-            firmwareProvider: firmwareProvider
+    private init(
+        name: String,
+        usbDeviceIDs: Set<USBDeviceID>,
+        expectedFirmwareFileNames: [String],
+        firmwareBookmarkKey: String,
+        supportsDuplex: Bool,
+        hardwareButtonSupport: ScannerHardwareEventSupportState,
+        supportsOneTouchScanning: Bool,
+        hardwareButtonInterpretation: EpjitsuHardwareButtonInterpretation
+    ) {
+        self.name = name
+        self.usbDeviceIDs = usbDeviceIDs
+        self.expectedFirmwareFileNames = expectedFirmwareFileNames
+        self.firmwareBookmarkKey = firmwareBookmarkKey
+        self.supportsDuplex = supportsDuplex
+        self.hardwareButtonSupport = hardwareButtonSupport
+        self.supportsOneTouchScanning = supportsOneTouchScanning
+        self.hardwareButtonInterpretation = hardwareButtonInterpretation
+        self.hardwareStatusResponseLength = 4
+        self.capabilities = ScannerCapabilities(
+            sources: [.adfFront, .adfBack, .adfDuplex],
+            colorModes: [.color],
+            resolutionsDPI: [150, 200, 300, 600],
+            scanArea: .init(width: 8.5, height: 11.5, unit: "inches"),
+            supportsBlankPageRemoval: false,
+            supportsDeskew: false,
+            supportsAutoCrop: false,
+            supportsAutoRotate: false,
+            supportsDuplex: supportsDuplex,
+            unsupportedReason: "Experimental: \(name) firmware bootstrap/status support exists, but calibrated epjitsu image acquisition is not implemented yet."
         )
     }
 }
 
-final class FujitsuScanSnapS300Device: ScannerDevice, ScannerHardwareEventSource {
+/// Native, direct-bulk USB support for the epjitsu ScanSnap family.
+struct EpjitsuScanSnapDriver: ScannerDriver {
+    let name = "Fujitsu ScanSnap epjitsu direct USB (experimental)"
+    let supportedUSBDeviceIDs: Set<USBDeviceID> = Set(EpjitsuScanSnapModelProfile.all.flatMap(\.usbDeviceIDs))
+
+    private let firmwareProvider: (EpjitsuScanSnapModelProfile) throws -> Data?
+
+    /// Production initializer: resolve a separate persisted bookmark for the
+    /// model identified by the connected USB product ID.
+    init(defaults: UserDefaults = .standard) {
+        self.firmwareProvider = { profile in
+            try EpjitsuScanSnapFirmwareStore(profile: profile, defaults: defaults).loadFirmwarePayload()
+        }
+    }
+
+    /// Compatibility initializer for protocol tests and callers that provide
+    /// an already-extracted payload. The payload is intentionally not reused
+    /// across the model-aware production stores.
+    init(firmwareProvider: @escaping () throws -> Data?) {
+        self.firmwareProvider = { _ in try firmwareProvider() }
+    }
+
+    func makeDevice(identity: ScannerIdentity, transport: USBDeviceTransport?) -> ScannerDevice {
+        let profile = identity.usbDeviceID.flatMap(EpjitsuScanSnapModelProfile.profile(for:)) ?? .s300
+        return EpjitsuScanSnapDevice(
+            identity: identity,
+            transport: transport,
+            profile: profile,
+            firmwareProvider: { try firmwareProvider(profile) }
+        )
+    }
+}
+
+final class EpjitsuScanSnapDevice: ScannerDevice, ScannerHardwareEventSource {
     let identity: ScannerIdentity
-    let capabilities = ScannerCapabilities(
-        sources: [.adfFront, .adfBack, .adfDuplex],
-        colorModes: [.color],
-        resolutionsDPI: [150, 200, 300, 600],
-        scanArea: .init(width: 8.5, height: 11.5, unit: "inches"),
-        supportsBlankPageRemoval: false,
-        supportsDeskew: false,
-        supportsAutoCrop: false,
-        supportsAutoRotate: false,
-        supportsDuplex: true,
-        unsupportedReason: "Experimental: firmware bootstrap works, but calibrated image acquisition is not enabled yet."
-    )
+    let profile: EpjitsuScanSnapModelProfile
+    var capabilities: ScannerCapabilities { profile.capabilities }
 
     private let transport: USBDeviceTransport?
     private let firmwareProvider: () throws -> Data?
-    private var commandEngine: ScanSnapS300CommandEngine?
+    private var commandEngine: EpjitsuCommandEngine?
     private(set) var status: ScannerStatus = .disconnected
     private var hardwareEventTask: Task<Void, Never>?
 
     var hardwareEventCapabilities: ScannerHardwareEventCapabilities {
-        ScannerHardwareEventCapabilities(
-            scanButton: .supportedUnvalidated,
-            supportsOneTouchScanning: false,
-            detail: "SANE epjitsu GET STATUS 0x1b/0x33 reports the Scan button in byte 1 bit 0. Button detection is available, but S300 image acquisition remains experimental."
+        let detail: String
+        switch profile.hardwareButtonInterpretation {
+        case .s300Byte1Bit0:
+            detail = "Epjitsu GET HARDWARE STATUS 0x1b/0x33 reports the Scan button in byte 1 bit 0 for this model. Button detection is experimental; image acquisition is unavailable."
+        case .unvalidated:
+            detail = "Epjitsu GET HARDWARE STATUS 0x1b/0x33 is exposed for this model, but the response layout and Scan-button bit have not been physically validated. One-touch scanning remains disabled."
+        }
+        return ScannerHardwareEventCapabilities(
+            scanButton: profile.hardwareButtonSupport,
+            supportsOneTouchScanning: profile.supportsOneTouchScanning,
+            detail: detail
         )
     }
 
     init(
         identity: ScannerIdentity,
         transport: USBDeviceTransport?,
+        profile: EpjitsuScanSnapModelProfile,
         firmwareProvider: @escaping () throws -> Data?
     ) {
         self.identity = identity
         self.transport = transport
+        self.profile = profile
         self.firmwareProvider = firmwareProvider
     }
 
@@ -74,14 +184,14 @@ final class FujitsuScanSnapS300Device: ScannerDevice, ScannerHardwareEventSource
             throw ScannerError.transportUnavailable("No USB transport was provided for \(identity.name).")
         }
 
-        ScanTrace.post("Opening experimental S300 direct-USB session.")
+        ScanTrace.post("Opening experimental \(profile.name) direct-USB session.")
         do {
             try await transport.open()
-            let engine = ScanSnapS300CommandEngine(transport: transport)
+            let engine = EpjitsuCommandEngine(transport: transport, profile: profile)
             let scannerIdentity = try await engine.prepare(firmwarePayload: try firmwareProvider())
             commandEngine = engine
             status = .idle
-            ScanTrace.post("S300 protocol identity: \(scannerIdentity.vendor) \(scannerIdentity.model).")
+            ScanTrace.post("\(profile.name) protocol identity: \(scannerIdentity.vendor) \(scannerIdentity.model).")
         } catch {
             await transport.close()
             status = .error(error.localizedDescription)
@@ -100,10 +210,10 @@ final class FujitsuScanSnapS300Device: ScannerDevice, ScannerHardwareEventSource
         await stopHardwareEventObservation()
         try capabilities.validate(options)
         guard commandEngine != nil else {
-            throw ScannerError.transportUnavailable("Open the S300 before starting a scan.")
+            throw ScannerError.transportUnavailable("Open the \(profile.name) before starting a scan.")
         }
         throw ScannerError.protocolNotImplemented(
-            "The S300 firmware and USB handshake succeeded. Calibrated image acquisition is still experimental and is not enabled in this build."
+            "The \(profile.name) initialized successfully, but epjitsu image acquisition is not implemented yet."
         )
     }
 
@@ -116,7 +226,7 @@ final class FujitsuScanSnapS300Device: ScannerDevice, ScannerHardwareEventSource
 
     func startHardwareEventObservation() async throws -> AsyncStream<ScannerHardwareEvent> {
         guard let commandEngine else {
-            throw ScannerError.transportUnavailable("Open and initialize the S300 before observing its hardware button.")
+            throw ScannerError.transportUnavailable("Open and initialize the \(profile.name) before observing its hardware button.")
         }
         await stopHardwareEventObservation()
         let stream = AsyncStream<ScannerHardwareEvent> { continuation in
@@ -124,7 +234,7 @@ final class FujitsuScanSnapS300Device: ScannerDevice, ScannerHardwareEventSource
                 await self?.pollHardwareEvents(commandEngine: commandEngine, continuation: continuation)
             }
         }
-        ScanTrace.post("Listening for the experimental S300 Scan button event.")
+        ScanTrace.post("Listening for the experimental \(profile.name) Scan button event.")
         return stream
     }
 
@@ -136,16 +246,21 @@ final class FujitsuScanSnapS300Device: ScannerDevice, ScannerHardwareEventSource
     }
 
     private func pollHardwareEvents(
-        commandEngine: ScanSnapS300CommandEngine,
+        commandEngine: EpjitsuCommandEngine,
         continuation: AsyncStream<ScannerHardwareEvent>.Continuation
     ) async {
-        var wasPressed = false
         defer { continuation.finish() }
+        guard case .s300Byte1Bit0 = profile.hardwareButtonInterpretation else {
+            continuation.yield(.diagnostic("\(profile.name) hardware-status response is available, but its Scan-button layout is not validated yet."))
+            return
+        }
+
+        var wasPressed = false
         while !Task.isCancelled {
             do {
                 let bytes = [UInt8](try await commandEngine.readHardwareStatus())
                 guard bytes.count >= 2 else {
-                    continuation.yield(.diagnostic("S300 returned a short hardware-status response."))
+                    continuation.yield(.diagnostic("\(profile.name) returned a short hardware-status response."))
                     return
                 }
                 let isPressed = (bytes[1] & 0x01) != 0
@@ -154,7 +269,7 @@ final class FujitsuScanSnapS300Device: ScannerDevice, ScannerHardwareEventSource
             } catch is CancellationError {
                 return
             } catch {
-                continuation.yield(.diagnostic("S300 hardware-button observation stopped: \(error.localizedDescription)"))
+                continuation.yield(.diagnostic("\(profile.name) hardware-button observation stopped: \(error.localizedDescription)"))
                 return
             }
             do {
@@ -166,37 +281,39 @@ final class FujitsuScanSnapS300Device: ScannerDevice, ScannerHardwareEventSource
     }
 }
 
-struct ScanSnapS300ProtocolIdentity: Equatable {
+struct EpjitsuProtocolIdentity: Equatable {
     let vendor: String
     let model: String
 }
 
-final class ScanSnapS300CommandEngine {
+final class EpjitsuCommandEngine {
     static let firmwarePayloadLength = 0x10000
 
     private let transport: USBDeviceTransport
+    private let profile: EpjitsuScanSnapModelProfile
     private let commandTimeout: UInt32 = 10_000
     private let dataTimeout: UInt32 = 10_000
 
-    init(transport: USBDeviceTransport) {
+    init(transport: USBDeviceTransport, profile: EpjitsuScanSnapModelProfile = .s300) {
         self.transport = transport
+        self.profile = profile
     }
 
-    func prepare(firmwarePayload: Data?) async throws -> ScanSnapS300ProtocolIdentity {
+    func prepare(firmwarePayload: Data?) async throws -> EpjitsuProtocolIdentity {
         var status = try await readStatus()
         if status & 0x10 == 0 {
             guard let firmwarePayload else {
                 throw ScannerError.transportUnavailable(
-                    "The ScanSnap S300 needs Fujitsu firmware. Choose 300_0C00.nal (or the S300M equivalent) in Diagnostics, then try again."
+                    "The \(profile.name) needs Fujitsu firmware. Choose \(profile.expectedFirmwareFileNames.joined(separator: " or ")) in Diagnostics, then try again."
                 )
             }
             try await uploadFirmware(firmwarePayload)
             status = try await readStatus()
             guard status & 0x10 != 0 else {
-                throw ScannerError.transportUnavailable("The S300 did not report loaded firmware after upload.")
+                throw ScannerError.transportUnavailable("The \(profile.name) did not report loaded firmware after upload.")
             }
         } else {
-            ScanTrace.post("S300 firmware is already loaded.")
+            ScanTrace.post("\(profile.name) firmware is already loaded.")
         }
         return try await readIdentity()
     }
@@ -207,18 +324,19 @@ final class ScanSnapS300CommandEngine {
         return response[response.startIndex]
     }
 
-    /// SANE epjitsu's GET HARDWARE STATUS command. The S300 returns four
-    /// bytes; byte 1 bit 0 is the physical Scan button.
+    /// Epjitsu GET HARDWARE STATUS. The S300-family response is four bytes;
+    /// models without a validated layout still use the common status command,
+    /// but their button bits are deliberately not interpreted.
     func readHardwareStatus() async throws -> Data {
         try await write([0x1b, 0x33])
-        return try await readExactly(4, label: "hardware status")
+        return try await readExactly(profile.hardwareStatusResponseLength, label: "hardware status")
     }
 
-    func readIdentity() async throws -> ScanSnapS300ProtocolIdentity {
+    func readIdentity() async throws -> EpjitsuProtocolIdentity {
         try await write([0x1b, 0x13])
         let response = try await readExactly(0x20, label: "identity")
         let bytes = [UInt8](response)
-        return ScanSnapS300ProtocolIdentity(
+        return EpjitsuProtocolIdentity(
             vendor: Self.ascii(bytes[0..<8]),
             model: Self.ascii(bytes[8..<24])
         )
@@ -227,11 +345,11 @@ final class ScanSnapS300CommandEngine {
     func uploadFirmware(_ payload: Data) async throws {
         guard payload.count == Self.firmwarePayloadLength else {
             throw ScannerError.transportUnavailable(
-                "The selected S300 firmware payload is \(payload.count) bytes; expected \(Self.firmwarePayloadLength)."
+                "The selected \(profile.name) firmware payload is \(payload.count) bytes; expected \(Self.firmwarePayloadLength)."
             )
         }
 
-        ScanTrace.post("Uploading user-supplied S300 firmware.")
+        ScanTrace.post("Uploading user-supplied \(profile.name) firmware.")
         try await commandExpectingAcknowledgement([0x1b, 0x06], label: "firmware start")
         try await write([0x01, 0x00, 0x01, 0x00])
         try await transport.bulkWrite(endpoint: 0, data: payload, timeoutMilliseconds: dataTimeout)
@@ -242,7 +360,7 @@ final class ScanSnapS300CommandEngine {
         try await commandExpectingAcknowledgement([checksum], label: "firmware checksum")
         try await commandExpectingAcknowledgement([0x1b, 0x16], label: "firmware reinitialize")
         try await commandExpectingAcknowledgement([0x80], label: "firmware reinitialize payload")
-        ScanTrace.post("S300 firmware upload acknowledged.")
+        ScanTrace.post("\(profile.name) firmware upload acknowledged.")
     }
 
     private func commandExpectingAcknowledgement(_ bytes: [UInt8], label: String) async throws {
@@ -250,7 +368,7 @@ final class ScanSnapS300CommandEngine {
         let response = try await readExactly(1, label: label)
         guard response.first == 0x06 else {
             let value = response.first.map { String(format: "0x%02x", $0) } ?? "none"
-            throw ScannerError.transportUnavailable("S300 \(label) returned \(value), expected ACK 0x06.")
+            throw ScannerError.transportUnavailable("\(profile.name) \(label) returned \(value), expected ACK 0x06.")
         }
     }
 
@@ -262,7 +380,7 @@ final class ScanSnapS300CommandEngine {
         let data = try await transport.bulkRead(endpoint: 0, length: length, timeoutMilliseconds: dataTimeout)
         guard data.count == length else {
             throw ScannerError.transportUnavailable(
-                "S300 \(label) returned \(data.count) bytes; expected \(length)."
+                "\(profile.name) \(label) returned \(data.count) bytes; expected \(length)."
             )
         }
         return data
@@ -276,13 +394,15 @@ final class ScanSnapS300CommandEngine {
     }
 }
 
-struct ScanSnapS300FirmwareStore {
-    static let expectedFileNames = ["300_0C00.nal", "300M_0C00.nal"]
+struct EpjitsuScanSnapFirmwareStore {
+    static let legacyS300BookmarkKey = "scan.scansnapS300FirmwareBookmark"
+    static let expectedFileNames = EpjitsuScanSnapModelProfile.all.flatMap(\.expectedFirmwareFileNames)
 
-    private static let bookmarkKey = "scan.scansnapS300FirmwareBookmark"
+    let profile: EpjitsuScanSnapModelProfile
     private let defaults: UserDefaults
 
-    init(defaults: UserDefaults) {
+    init(profile: EpjitsuScanSnapModelProfile = .s300, defaults: UserDefaults) {
+        self.profile = profile
         self.defaults = defaults
     }
 
@@ -291,51 +411,84 @@ struct ScanSnapS300FirmwareStore {
     }
 
     func saveFirmware(at url: URL) throws {
+        try validateFilename(url.lastPathComponent)
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-        _ = try Self.extractPayload(from: Data(contentsOf: url))
+        _ = try Self.extractPayload(from: Data(contentsOf: url), modelName: profile.name)
         let bookmark = try url.bookmarkData(
             options: [.withSecurityScope],
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         )
-        defaults.set(bookmark, forKey: Self.bookmarkKey)
+        defaults.set(bookmark, forKey: profile.firmwareBookmarkKey)
     }
 
     func loadFirmwarePayload() throws -> Data? {
         guard let url = resolveBookmark() else { return nil }
+        try validateFilename(url.lastPathComponent)
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-        return try Self.extractPayload(from: Data(contentsOf: url))
+        return try Self.extractPayload(from: Data(contentsOf: url), modelName: profile.name)
     }
 
     static func extractPayload(from firmwareFile: Data) throws -> Data {
+        try extractPayload(from: firmwareFile, modelName: EpjitsuScanSnapModelProfile.s300.name)
+    }
+
+    static func extractPayload(from firmwareFile: Data, modelName: String) throws -> Data {
         let headerLength = 0x100
-        let requiredLength = headerLength + ScanSnapS300CommandEngine.firmwarePayloadLength
+        let requiredLength = headerLength + EpjitsuCommandEngine.firmwarePayloadLength
         guard firmwareFile.count >= requiredLength else {
             throw ScannerError.transportUnavailable(
-                "The selected file is too short to be S300 firmware (\(firmwareFile.count) bytes; expected at least \(requiredLength))."
+                "The selected file is too short to be \(modelName) firmware (\(firmwareFile.count) bytes; expected at least \(requiredLength))."
             )
         }
         return firmwareFile.subdata(in: headerLength..<requiredLength)
     }
 
-    private func resolveBookmark() -> URL? {
-        guard let bookmark = defaults.data(forKey: Self.bookmarkKey) else { return nil }
-        var isStale = false
-        guard let url = try? URL(
-            resolvingBookmarkData: bookmark,
-            options: [.withSecurityScope],
-            relativeTo: nil,
-            bookmarkDataIsStale: &isStale
-        ) else { return nil }
-        if isStale, let refreshed = try? url.bookmarkData(
-            options: [.withSecurityScope],
-            includingResourceValuesForKeys: nil,
-            relativeTo: nil
-        ) {
-            defaults.set(refreshed, forKey: Self.bookmarkKey)
+    private func validateFilename(_ filename: String) throws {
+        let expected = profile.expectedFirmwareFileNames
+        guard expected.contains(where: { $0.caseInsensitiveCompare(filename) == .orderedSame }) else {
+            throw ScannerError.transportUnavailable(
+                "The selected firmware file \(filename) does not match \(profile.name). Expected \(expected.joined(separator: " or "))."
+            )
         }
-        return url
+    }
+
+    private func resolveBookmark() -> URL? {
+        let keys = profile == .s300
+            ? [profile.firmwareBookmarkKey, Self.legacyS300BookmarkKey]
+            : [profile.firmwareBookmarkKey]
+        for key in keys {
+            guard let bookmark = defaults.data(forKey: key) else { continue }
+            var isStale = false
+            guard let url = try? URL(
+                resolvingBookmarkData: bookmark,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            ) else { continue }
+            if isStale, let refreshed = try? url.bookmarkData(
+                options: [.withSecurityScope],
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            ) {
+                defaults.set(refreshed, forKey: profile.firmwareBookmarkKey)
+            } else if key == Self.legacyS300BookmarkKey {
+                // Migrate the old global S300 bookmark to the model-specific
+                // key without deleting the legacy value.
+                defaults.set(bookmark, forKey: profile.firmwareBookmarkKey)
+            }
+            return url
+        }
+        return nil
     }
 }
+
+// Source compatibility for existing callers and tests while clients migrate
+// to the generic epjitsu names. These aliases do not create a second backend.
+typealias FujitsuScanSnapS300Driver = EpjitsuScanSnapDriver
+typealias FujitsuScanSnapS300Device = EpjitsuScanSnapDevice
+typealias ScanSnapS300CommandEngine = EpjitsuCommandEngine
+typealias ScanSnapS300ProtocolIdentity = EpjitsuProtocolIdentity
+typealias ScanSnapS300FirmwareStore = EpjitsuScanSnapFirmwareStore

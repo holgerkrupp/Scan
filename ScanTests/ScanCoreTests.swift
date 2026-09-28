@@ -206,12 +206,9 @@ final class ScanCoreTests: XCTestCase {
         XCTAssertEqual(FujitsuScanSnapIX1600Driver().makeDevice(identity: ix1600, transport: nil).capabilities, FujitsuScanSnapIX1500Driver().makeDevice(identity: ix1500, transport: nil).capabilities)
     }
 
-    func testS300DriverClaimsOnlyTheDirectUSBModels() {
-        let driver = FujitsuScanSnapS300Driver(firmwareProvider: { nil })
-        XCTAssertEqual(driver.supportedUSBDeviceIDs, [
-            USBDeviceID(vendorID: 0x04c5, productID: 0x1156),
-            USBDeviceID(vendorID: 0x04c5, productID: 0x117f)
-        ])
+    func testEpjitsuDriverClaimsOnlyTheDirectUSBModels() {
+        let driver = EpjitsuScanSnapDriver(firmwareProvider: { nil })
+        XCTAssertEqual(driver.supportedUSBDeviceIDs, Set(EpjitsuScanSnapModelProfile.all.flatMap(\.usbDeviceIDs)))
 
         let identity = ScannerIdentity(
             name: "ScanSnap S300",
@@ -227,6 +224,91 @@ final class ScanCoreTests: XCTestCase {
         XCTAssertEqual(device.capabilities.resolutionsDPI, [150, 200, 300, 600])
         XCTAssertTrue(device.capabilities.supportsDuplex)
         XCTAssertNotNil(device.capabilities.unsupportedReason)
+    }
+
+    func testEpjitsuRegistryRoutesAllClaimedModelsAndNeverSCSIOverUSB() {
+        let expected: [(UInt16, EpjitsuScanSnapModelProfile)] = [
+            (0x1156, .s300), (0x117f, .s300M), (0x11ed, .s1300), (0x128d, .s1300i)
+        ]
+        for (productID, profile) in expected {
+            let identity = usbIdentity(productID)
+            let driver = ScannerDriverRegistry.live.driver(for: identity)
+            XCTAssertTrue(driver is EpjitsuScanSnapDriver, profile.name)
+            XCTAssertEqual((driver?.makeDevice(identity: identity, transport: nil) as? EpjitsuScanSnapDevice)?.profile, profile)
+            XCTAssertFalse(FujitsuScanSnapS1500Driver().canDrive(identity), profile.name)
+            XCTAssertFalse(FujitsuScanSnapIX500Driver().canDrive(identity), profile.name)
+        }
+    }
+
+    func testEpjitsuProfilesKeepFirmwareNamesAndIndependentBookmarkKeys() {
+        XCTAssertEqual(EpjitsuScanSnapModelProfile.s300.expectedFirmwareFileNames, ["300_0C00.nal"])
+        XCTAssertEqual(EpjitsuScanSnapModelProfile.s300M.expectedFirmwareFileNames, ["300M_0C00.nal"])
+        XCTAssertEqual(EpjitsuScanSnapModelProfile.s1300.expectedFirmwareFileNames, ["1300_0C26.nal"])
+        XCTAssertEqual(EpjitsuScanSnapModelProfile.s1300i.expectedFirmwareFileNames, ["1300i_0D12.nal"])
+
+        let keys = Set(EpjitsuScanSnapModelProfile.all.map(\.firmwareBookmarkKey))
+        XCTAssertEqual(keys.count, EpjitsuScanSnapModelProfile.all.count)
+        XCTAssertFalse(keys.contains(EpjitsuScanSnapFirmwareStore.legacyS300BookmarkKey))
+    }
+
+    func testEpjitsuFirmwareSelectionRejectsAnotherModelsFilename() {
+        let store = EpjitsuScanSnapFirmwareStore(profile: .s1300i, defaults: UserDefaults(suiteName: "EpjitsuFirmware-\(UUID().uuidString)")!)
+        XCTAssertThrowsError(try store.saveFirmware(at: URL(fileURLWithPath: "/tmp/1300_0C26.nal"))) { error in
+            XCTAssertTrue(error.localizedDescription.contains("S1300i"))
+            XCTAssertTrue(error.localizedDescription.contains("1300i_0D12.nal"))
+        }
+    }
+
+    func testEpjitsuFirmwareBookmarksAreModelSpecificAndMigrateTheOldS300Key() throws {
+        let suiteName = "EpjitsuFirmwarePersistence-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("EpjitsuFirmware-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let s300URL = folder.appendingPathComponent("300_0C00.nal")
+        let s1300iURL = folder.appendingPathComponent("1300i_0D12.nal")
+        let container = Data(repeating: 0x5a, count: 0x100 + EpjitsuCommandEngine.firmwarePayloadLength)
+        try container.write(to: s300URL)
+        try container.write(to: s1300iURL)
+
+        // The old global bookmark remains usable only by the matching S300
+        // profile and is copied to its new per-model key on first read.
+        let oldBookmark = try s300URL.bookmarkData(options: [.withSecurityScope])
+        defaults.set(oldBookmark, forKey: EpjitsuScanSnapFirmwareStore.legacyS300BookmarkKey)
+        let s300Store = EpjitsuScanSnapFirmwareStore(profile: .s300, defaults: defaults)
+        XCTAssertEqual(s300Store.selectedFilename, "300_0C00.nal")
+        XCTAssertNotNil(defaults.data(forKey: EpjitsuScanSnapModelProfile.s300.firmwareBookmarkKey))
+
+        let s1300iStore = EpjitsuScanSnapFirmwareStore(profile: .s1300i, defaults: defaults)
+        XCTAssertNil(s1300iStore.selectedFilename, "S300's old bookmark must not satisfy S1300i")
+        try s1300iStore.saveFirmware(at: s1300iURL)
+        XCTAssertEqual(s1300iStore.selectedFilename, "1300i_0D12.nal")
+        XCTAssertEqual(try s1300iStore.loadFirmwarePayload()?.count, EpjitsuCommandEngine.firmwarePayloadLength)
+    }
+
+    func testS1300iUsesTheCommonEpjitsuBootstrapAndIdentityProtocol() async throws {
+        var identityResponse = Data("FUJITSU ".utf8)
+        identityResponse.append(Data("ScanSnap S1300i ".utf8))
+        identityResponse.append(Data(repeating: 0, count: 8))
+        XCTAssertEqual(identityResponse.count, 0x20)
+
+        let transport = ScriptedUSBTransport(reads: [Data([0x10, 0x00]), identityResponse])
+        let engine = EpjitsuCommandEngine(transport: transport, profile: .s1300i)
+        let result = try await engine.prepare(firmwarePayload: nil)
+        XCTAssertEqual(result, EpjitsuProtocolIdentity(vendor: "FUJITSU", model: "ScanSnap S1300i"))
+        XCTAssertEqual(transport.capturedWrites(), [Data([0x1b, 0x03]), Data([0x1b, 0x13])])
+    }
+
+    func testEpjitsu1300FamilyButtonSupportIsUnvalidatedAndNeverOneTouch() {
+        for (productID, profile) in [(UInt16(0x11ed), EpjitsuScanSnapModelProfile.s1300), (0x128d, .s1300i)] {
+            let identity = usbIdentity(productID)
+            let device = EpjitsuScanSnapDriver(firmwareProvider: { nil }).makeDevice(identity: identity, transport: nil)
+            let events = (device as! ScannerHardwareEventSource).hardwareEventCapabilities
+            XCTAssertEqual(events.scanButton, ScannerHardwareEventSupportState.supportedUnvalidated, profile.name)
+            XCTAssertFalse(events.supportsOneTouchScanning, profile.name)
+        }
     }
 
     func testS300FirmwareContainerDropsHeaderAndRequiresFullPayload() throws {
@@ -286,6 +368,18 @@ final class ScanCoreTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         addTeardownBlock { UserDefaults().removePersistentDomain(forName: suiteName) }
         return ScannerWorkspaceViewModel(discovery: discovery, registry: .live, outputWriter: ScanOutputWriter(), profileStore: ScanProfileStore(defaults: defaults), automaticRefreshDelay: .milliseconds(20))
+    }
+
+    private func usbIdentity(_ productID: UInt16) -> ScannerIdentity {
+        ScannerIdentity(
+            name: "ScanSnap USB 0x\(String(format: "%04x", productID))",
+            manufacturer: "Fujitsu",
+            model: "Unknown",
+            serialNumber: nil,
+            connectionKind: .usb,
+            usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: productID),
+            locationID: 1
+        )
     }
 
     private func waitUntil(timeout: Duration = .seconds(2), _ condition: () -> Bool) async throws {

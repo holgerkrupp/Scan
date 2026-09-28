@@ -134,16 +134,30 @@ The downloadable gamma table (`FujitsuGammaTable`, SEND type 0x83) is built like
 
 The command engine never makes output-format compression decisions beyond that pass-through. Cancellation sets a terminal cancellation flag before aborting transfers, so a late transport error cannot replace cancellation with a generic failure. Partial pages remain in the review workspace.
 
-## Experimental ScanSnap S300 direct-USB backend
+## Experimental epjitsu ScanSnap direct-USB backend
 
-`FujitsuScanSnapS300Driver` separately matches the S300 (`0x1156`) and S300M
-(`0x117f`). These scanners do not use the SCSI-over-USB command wrapper. The
-backend implements direct bulk status, firmware upload/checksum,
-reinitialization, and identity exchanges. The required Fujitsu firmware is
-not redistributable, so the user chooses it and the app retains a
-security-scoped bookmark. Model-specific calibration and image acquisition
-remain disabled until they have an independently implemented command model
-and can be exercised against physical hardware.
+`EpjitsuScanSnapDriver` is a shared direct bulk-USB backend for the S300
+(`0x04c5:0x1156`), S300M (`0x04c5:0x117f`), S1300 (`0x04c5:0x11ed`), and
+S1300i (`0x04c5:0x128d`). These devices do not use the Fujitsu
+SCSI-over-USB command wrapper. `EpjitsuScanSnapModelProfile` supplies each
+model's identity, USB ID, expected firmware filename, bookmark key,
+capabilities, duplex flag, and hardware-button validation state; the common
+`EpjitsuCommandEngine` performs the status, firmware upload/checksum,
+reinitialization, hardware-status, and identity exchanges.
+
+Fujitsu firmware is copyrighted and not redistributable. The user supplies
+the model-matching `300_0C00.nal`, `300M_0C00.nal`, `1300_0C26.nal`, or
+`1300i_0D12.nal` file, and the app keeps a separate security-scoped bookmark
+per model. An old S300 bookmark is migrated only for the S300 profile and is
+still checked against the expected filename.
+
+The common epjitsu bootstrap is preliminary support, not a working scanner
+pipeline: calibrated image acquisition is not implemented, so `startScan()`
+returns `protocolNotImplemented` after a successful initialization. S300/S300M
+retain the documented experimental button interpretation; S1300/S1300i expose
+the `0x1b/0x33` status path as `supportedUnvalidated` without assuming its
+button bit, and one-touch scanning remains disabled. S1100/S1100i are not
+claimed until their IDs and behavior can be represented without false support.
 
 ## Image Capture backend and discovery
 
@@ -173,4 +187,4 @@ Devices discovered without a matching driver remain visible as “Discovered, un
 2. Add only verified USB IDs to that driver’s `supportedUSBDeviceIDs`.
 3. Add the driver to `ScannerDriverRegistry.live` after its transport/protocol tests pass.
 4. Add a hardware validation matrix covering enumeration, open/close, every advertised source/color/DPI combination, simplex/duplex ordering, page dimensions, cancellation, empty feeder, jam/double-feed, disconnect, and partial-batch recovery.
-5. Keep simulated fixtures and automated tests independent of physical hardware: add transcript scenarios for the new profile to `FujitsuCommandTranscriptTests` (record them with the scripted transport once the sequence has been validated on the device). The fi-5110EOX, S500, unvalidated S510 product variants, fi-5000 and fi-6000 profiles are protocol-backed only; physical validation of each model is still required before release claims are made. The S1300/S1300i and S1100/S1100i models are not included because their epjitsu protocol is different.
+5. Keep simulated fixtures and automated tests independent of physical hardware: add transcript scenarios for the new profile to `FujitsuCommandTranscriptTests` (record them with the scripted transport once the sequence has been validated on the device). The fi-5110EOX, S500, unvalidated S510 product variants, fi-5000 and fi-6000 profiles are protocol-backed only; physical validation of each model is still required before release claims are made. For epjitsu models, extend `EpjitsuScanSnapModelProfile` and reuse `EpjitsuCommandEngine`; do not add their IDs to a `FujitsuScanSnapModelProfile` or `FujitsuScanSnapDevice`.

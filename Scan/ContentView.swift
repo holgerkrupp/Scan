@@ -238,10 +238,10 @@ struct ContentView: View {
                 capabilityToggle("Automatic orientation", value: profile(\.options.processing.autoRotate), supported: viewModel.capabilities?.supportsAutoRotate ?? false, reason: "Automatic orientation is unavailable for this backend.")
             }
             Section("Diagnostics") {
-                if viewModel.selectedScannerUsesS300Protocol {
+                if viewModel.selectedScannerUsesEpjitsuProtocol, let profile = viewModel.selectedEpjitsuProfile {
                     VStack(alignment: .leading, spacing: 5) {
-                        Button("Choose S300 firmware…") { viewModel.chooseS300Firmware() }
-                        Text(viewModel.s300FirmwareFilename.map { "S300 firmware: \($0)" } ?? "S300 firmware is not selected")
+                        Button("Choose \(profile.name) firmware…") { viewModel.chooseEpjitsuFirmware() }
+                        Text(viewModel.epjitsuFirmwareFilename.map { "\(profile.name) firmware: \($0)" } ?? "\(profile.name) firmware is not selected")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
