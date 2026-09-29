@@ -102,6 +102,18 @@ final class ScanCoreTests: XCTestCase {
         XCTAssertFalse(s300Device.hardwareEventCapabilities.supportsOneTouchScanning)
     }
 
+    func testHardwareButtonMonitoringRestartsAfterAScan() async throws {
+        let scanner = ScannerIdentity(name: "Button Scanner", manufacturer: "Fujitsu", model: "iX500", serialNumber: nil, connectionKind: .imageCapture, usbDeviceID: nil, locationID: nil, persistentID: "button-scanner")
+        let driver = ButtonMonitoringDriver()
+        let viewModel = try makeViewModel(discovery: StaticDiscovery([scanner]), registry: ScannerDriverRegistry(drivers: [driver]))
+        // Set directly so the test neither persists the setting nor changes the app's activation policy.
+        viewModel.hardwareButtonSettings.enabled = true
+        viewModel.selectedIdentity = scanner
+        await viewModel.startScan()
+        XCTAssertFalse(viewModel.isScanning)
+        try await waitUntil { driver.observationStartCount == 1 }
+    }
+
     func testBlankPageDetectionAndJPEGDownsampling() throws {
         let blank = try makeFrame(pageIndex: 1, blank: true, width: 600, height: 800)
         let printed = try makeFrame(pageIndex: 2, blank: false, width: 600, height: 800)
@@ -363,11 +375,11 @@ final class ScanCoreTests: XCTestCase {
         XCTAssertEqual(transport.capturedWrites(), [Data([0x1b, 0x33])])
     }
 
-    private func makeViewModel(discovery: ScannerDiscovery) throws -> ScannerWorkspaceViewModel {
+    private func makeViewModel(discovery: ScannerDiscovery, registry: ScannerDriverRegistry = .live) throws -> ScannerWorkspaceViewModel {
         let suiteName = "ScanCoreTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         addTeardownBlock { UserDefaults().removePersistentDomain(forName: suiteName) }
-        return ScannerWorkspaceViewModel(discovery: discovery, registry: .live, outputWriter: ScanOutputWriter(), profileStore: ScanProfileStore(defaults: defaults), automaticRefreshDelay: .milliseconds(20))
+        return ScannerWorkspaceViewModel(discovery: discovery, registry: registry, outputWriter: ScanOutputWriter(), profileStore: ScanProfileStore(defaults: defaults), automaticRefreshDelay: .milliseconds(20))
     }
 
     private func usbIdentity(_ productID: UInt16) -> ScannerIdentity {
@@ -424,6 +436,35 @@ private final class ObservableDiscovery: ScannerDiscovery {
     func discover() async -> [ScannerIdentity] { discoverCount += 1; return identities }
     func observeChanges(_ onChange: @escaping @MainActor () -> Void) { self.onChange = onChange }
     func simulateChange() { onChange?() }
+}
+
+/// A scanner whose button monitoring can be observed: it records every start
+/// of hardware-event observation and scans an empty feeder.
+private final class ButtonMonitoringDriver: ScannerDriver {
+    let name = "Button monitoring test driver"
+    let supportedUSBDeviceIDs: Set<USBDeviceID> = []
+    private(set) var observationStartCount = 0
+    func canDrive(_ identity: ScannerIdentity) -> Bool { true }
+    func makeDevice(identity: ScannerIdentity, transport: USBDeviceTransport?) -> ScannerDevice { ButtonMonitoringDevice(identity: identity, driver: self) }
+    func recordObservationStart() { observationStartCount += 1 }
+}
+
+private final class ButtonMonitoringDevice: ScannerDevice, ScannerHardwareEventSource {
+    let identity: ScannerIdentity
+    let capabilities = ScannerCapabilities(sources: ScanSource.allCases, colorModes: ScanColorMode.allCases, resolutionsDPI: [150, 300, 600], supportsBlankPageRemoval: true, supportsDeskew: true, supportsAutoCrop: true, supportsDuplex: true)
+    let status: ScannerStatus = .idle
+    let hardwareEventCapabilities = ScannerHardwareEventCapabilities(scanButton: .supportedValidated, supportsOneTouchScanning: true, detail: "Test scanner")
+    private let driver: ButtonMonitoringDriver
+    init(identity: ScannerIdentity, driver: ButtonMonitoringDriver) { self.identity = identity; self.driver = driver }
+    func open() async throws {}
+    func close() async {}
+    func cancel() async {}
+    func startScan(options: ScanOptions) async throws -> AsyncThrowingStream<PageFrame, Error> { AsyncThrowingStream { $0.finish() } }
+    func startHardwareEventObservation() async throws -> AsyncStream<ScannerHardwareEvent> {
+        driver.recordObservationStart()
+        return AsyncStream { _ in }
+    }
+    func stopHardwareEventObservation() async {}
 }
 
 @MainActor
