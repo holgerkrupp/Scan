@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var viewModel = ScannerWorkspaceViewModel.shared
+    @State private var showingDocumentation = false
     /// Thumbnail width chosen with the slider next to "Reveal in Finder".
     @AppStorage("scan.thumbnailSize") private var thumbnailSize = 170.0
     @State private var gridWidth = 0.0
@@ -19,13 +20,28 @@ struct ContentView: View {
             }
         }
         .task { await viewModel.refreshDevices() }
+        .onReceive(NotificationCenter.default.publisher(for: .scanShowDocumentation)) { _ in
+            showingDocumentation = true
+        }
+        .sheet(isPresented: $showingDocumentation) {
+            ScanDocumentationView()
+        }
         // Must fit the widest sidebar (380) plus preview (420) and inspector (370); otherwise the split view overflows and is centred, clipping the sidebar.
         .frame(minWidth: 1180, minHeight: 760)
     }
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack { Label("Scanners", systemImage: "scanner").font(.headline); Spacer(); Button { Task { await viewModel.refreshDevices() } } label: { Image(systemName: "arrow.clockwise") }.disabled(viewModel.isRefreshing) }
+            HStack {
+                Label("Scanners", systemImage: "scanner").font(.headline)
+                Spacer()
+                Button { showingDocumentation = true } label: { Image(systemName: "questionmark.circle") }
+                    .buttonStyle(.plain)
+                    .help("Scan Help")
+                Button { Task { await viewModel.refreshDevices() } } label: { Image(systemName: "arrow.clockwise") }
+                    .disabled(viewModel.isRefreshing)
+                    .help("Refresh scanners")
+            }
             Text("Legacy ScanSnap and fi-series USB (S300 experimental) plus Image Capture").font(.caption).foregroundStyle(.secondary)
             List(selection: Binding(get: { viewModel.selectedIdentity }, set: { viewModel.selectedIdentity = $0 })) {
                 ForEach(viewModel.discoveredIdentities) { identity in

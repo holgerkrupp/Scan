@@ -92,8 +92,8 @@ The native Fujitsu USB backends recognize the following models:
 
 | Scanner | USB product ID | Status |
 | --- | --- | --- |
-| ScanSnap S300 / S300M (epjitsu, experimental) | `0x1156` / `0x117f` | Firmware bootstrap/status/identity only, no calibrated image acquisition yet |
-| ScanSnap S1300 / S1300i (epjitsu, preliminary) | `0x11ed` / `0x128d` | Firmware bootstrap/status/identity only; button support unvalidated; no image acquisition yet |
+| ScanSnap S300 / S300M (epjitsu, experimental) | `0x1156` / `0x117f` | Color ADF acquisition implemented; hardware validation and button support remain experimental |
+| ScanSnap S1300 / S1300i (epjitsu, preliminary) | `0x11ed` / `0x128d` | Color ADF acquisition implemented; button support remains unvalidated |
 | ScanSnap S500 / S500M | `0x10fe` / `0x1135` | Protocol profile (S1500 command flow), not yet validated on hardware |
 | ScanSnap S510 / S510M | `0x1155` / `0x116f` | Validated on S510M hardware: duplex color at 300 dpi; optional buffer-page rejection and BGR interlace handled |
 | ScanSnap S1500 / S1500M | `0x11a2` | Validated on hardware |

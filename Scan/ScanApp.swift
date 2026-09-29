@@ -100,6 +100,13 @@ struct ScanApp: App {
             CommandGroup(replacing: .undoRedo) { }
             CommandGroup(replacing: .toolbar) { }
             CommandGroup(replacing: .help) {
+                Button("Scan Help") {
+                    NotificationCenter.default.post(name: .scanShowDocumentation, object: nil)
+                }
+                .keyboardShortcut("?", modifiers: [.command, .shift])
+
+                Divider()
+
                 Button("Scan Source Code on GitHub") {
                     NSWorkspace.shared.open(ScanProjectLinks.sourceCode)
                 }
@@ -114,4 +121,8 @@ struct ScanApp: App {
             ScanSettingsView(viewModel: workspace)
         }
     }
+}
+
+extension Notification.Name {
+    static let scanShowDocumentation = Notification.Name("ScanShowDocumentation")
 }

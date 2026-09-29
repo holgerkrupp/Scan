@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// The direct-bulk USB ScanSnap family described by SANE's `epjitsu` backend.
@@ -68,7 +69,7 @@ struct EpjitsuScanSnapModelProfile: Equatable, Sendable {
         hardwareButtonInterpretation: .unvalidated
     )
 
-    static let all: [EpjitsuScanSnapModelProfile] = [.s300, .s300M, .s1300, .s1300i]
+    nonisolated static let all: [EpjitsuScanSnapModelProfile] = [.s300, .s300M, .s1300, .s1300i]
 
     nonisolated static func profile(for usbDeviceID: USBDeviceID) -> EpjitsuScanSnapModelProfile? {
         all.first { $0.usbDeviceIDs.contains(usbDeviceID) }
@@ -103,7 +104,7 @@ struct EpjitsuScanSnapModelProfile: Equatable, Sendable {
             supportsAutoCrop: false,
             supportsAutoRotate: false,
             supportsDuplex: supportsDuplex,
-            unsupportedReason: "Experimental: \(name) firmware bootstrap/status support exists, but calibrated epjitsu image acquisition is not implemented yet."
+            unsupportedReason: "Experimental direct-USB acquisition: color ADF scanning is implemented; grayscale, line-art, and hardware-button one-touch behavior remain unavailable or unvalidated."
         )
     }
 }
@@ -156,7 +157,7 @@ final class EpjitsuScanSnapDevice: ScannerDevice, ScannerHardwareEventSource {
         let detail: String
         switch profile.hardwareButtonInterpretation {
         case .s300Byte1Bit0:
-            detail = "Epjitsu GET HARDWARE STATUS 0x1b/0x33 reports the Scan button in byte 1 bit 0 for this model. Button detection is experimental; image acquisition is unavailable."
+            detail = "Epjitsu GET HARDWARE STATUS 0x1b/0x33 reports the Scan button in byte 1 bit 0 for this model. Button detection is experimental."
         case .unvalidated:
             detail = "Epjitsu GET HARDWARE STATUS 0x1b/0x33 is exposed for this model, but the response layout and Scan-button bit have not been physically validated. One-touch scanning remains disabled."
         }
@@ -209,12 +210,39 @@ final class EpjitsuScanSnapDevice: ScannerDevice, ScannerHardwareEventSource {
     func startScan(options: ScanOptions) async throws -> AsyncThrowingStream<PageFrame, Error> {
         await stopHardwareEventObservation()
         try capabilities.validate(options)
-        guard commandEngine != nil else {
+        guard let commandEngine else {
             throw ScannerError.transportUnavailable("Open the \(profile.name) before starting a scan.")
         }
-        throw ScannerError.protocolNotImplemented(
-            "The \(profile.name) initialized successfully, but epjitsu image acquisition is not implemented yet."
-        )
+
+        status = .scanning(progress: 0, pagesScanned: 0)
+        return AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    var pageIndex = 0
+                    try await commandEngine.scan(options: options) { frame in
+                        pageIndex += 1
+                        continuation.yield(PageFrame(
+                            pageIndex: pageIndex,
+                            side: frame.side,
+                            pixelFormat: .jpeg,
+                            width: frame.width,
+                            height: frame.height,
+                            resolutionDPI: frame.resolutionDPI,
+                            data: frame.data
+                        ))
+                        self.status = .scanning(progress: nil, pagesScanned: pageIndex)
+                    }
+                    self.status = .idle
+                    continuation.finish()
+                } catch is CancellationError {
+                    self.status = .idle
+                    continuation.finish(throwing: ScannerError.scanCancelled)
+                } catch {
+                    self.status = .error(error.localizedDescription)
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
     }
 
     func cancel() async {
@@ -286,6 +314,202 @@ struct EpjitsuProtocolIdentity: Equatable {
     let model: String
 }
 
+private struct EpjitsuAcquiredPage {
+    let side: PageSide
+    let width: Int
+    let height: Int
+    let resolutionDPI: Int
+    let data: Data
+}
+
+/// The S300-family scanner has a small, resolution-dependent raster geometry
+/// table.  These values are protocol geometry, not firmware; the scanner still
+/// supplies all of the image data and calibration state at run time.
+private struct EpjitsuAcquisitionProfile {
+    enum WindowKind { case coarseCalibration, fineCalibration, sendCalibration, scan }
+
+    let protocolXResolution: Int
+    let protocolYResolution: Int
+    let rawLineStride: Int
+    let rawPlaneStride: Int
+    let rawPlaneWidth: Int
+    let calibrationLineStride: Int
+    let calibrationPlaneStride: Int
+    let calibrationPlaneWidth: Int
+    let blockHeight: Int
+    let gainHeader: [UInt8]
+    let offsetHeader: [UInt8]
+
+    static func make(model: EpjitsuScanSnapModelProfile, requestedResolution: Int) throws -> Self {
+        let protocolResolution: Int
+        let protocolYResolution: Int
+        switch requestedResolution {
+        case 150: protocolResolution = 150; protocolYResolution = 150
+        case 200: protocolResolution = 225; protocolYResolution = 200
+        case 300: protocolResolution = 300; protocolYResolution = 300
+        case 600: protocolResolution = 600; protocolYResolution = 600
+        default:
+            throw ScannerError.unsupportedOption("Epjitsu color acquisition does not support \(requestedResolution) dpi.")
+        }
+
+        let values: (rawLine: Int, rawPlane: Int, rawWidth: Int, calLine: Int, calPlane: Int, calWidth: Int, block: Int)
+        switch protocolResolution {
+        case 150: values = (7216 * 3, 2960 * 3, 1296, 14432 * 3, 5920 * 3, 2592, 24)
+        case 225: values = (10584 * 3, 4320 * 3, 1944, 14112 * 3, 5760 * 3, 2592, 16)
+        case 300: values = (15872 * 3, 6640 * 3, 2592, 15872 * 3, 6640 * 3, 2592, 11)
+        default: values = (16064 * 3, 5440 * 3, 5184, 16064 * 3, 5440 * 3, 5184, 10)
+        }
+
+        let is1300i = model == .s1300i
+        let gainHeader: [UInt8]
+        let offsetHeader: [UInt8]
+        switch (is1300i, protocolResolution) {
+        case (true, 150): gainHeader = Self.repeatedPair(0xc4, 0x06, count: 6); offsetHeader = Self.repeatedPair(0xd7, 0x3b, count: 3) + [0x07]
+        case (true, 225): gainHeader = Self.repeatedPair(0x2f, 0x07, count: 6); offsetHeader = Self.repeatedPair(0xa5, 0x3b, count: 3) + [0x07]
+        case (true, 300): gainHeader = Self.repeatedPair(0xdd, 0x06, count: 6); offsetHeader = Self.repeatedPair(0x75, 0x3c, count: 3) + [0x07]
+        case (true, 600): gainHeader = Self.repeatedPair(0x4d, 0x06, count: 6); offsetHeader = Self.repeatedPair(0x8f, 0x40, count: 3) + [0x07]
+        case (false, 600): gainHeader = Self.repeatedPair(0x7f, 0x0b, count: 6); offsetHeader = Self.repeatedPair(0xc7, 0x23, count: 3) + [0x07]
+        default: gainHeader = Self.repeatedPair(0xe2, 0x0a, count: 6); offsetHeader = Self.repeatedPair(0x77, 0x26, count: 3) + [0x07]
+        }
+
+        return Self(
+            protocolXResolution: protocolResolution,
+            protocolYResolution: protocolYResolution,
+            rawLineStride: values.rawLine,
+            rawPlaneStride: values.rawPlane,
+            rawPlaneWidth: values.rawWidth,
+            calibrationLineStride: values.calLine,
+            calibrationPlaneStride: values.calPlane,
+            calibrationPlaneWidth: values.calWidth,
+            blockHeight: values.block,
+            gainHeader: gainHeader + [0x00, 0x04],
+            offsetHeader: offsetHeader
+        )
+    }
+
+    func window(_ kind: WindowKind, scanHeight: Int = 0) -> Data {
+        var bytes = [UInt8](repeating: 0, count: 72)
+        func putBE(_ offset: Int, _ value: Int, _ count: Int) {
+            for index in 0..<count {
+                bytes[offset + count - index - 1] = UInt8((value >> (index * 8)) & 0xff)
+            }
+        }
+        bytes[7] = 0x40
+        bytes[0x21] = 0x05 // RGB colour composition
+        bytes[0x22] = 0x08 // 8 bits per component
+
+        switch kind {
+        case .coarseCalibration:
+            putBE(0x0a, 300, 2); putBE(0x0c, 300, 2)
+            putBE(0x16, calibrationPlaneStride / 3, 4); putBE(0x1a, 1, 4)
+            bytes[0x34] = 0x01; putBE(0x39, protocolXResolution, 2)
+        case .fineCalibration:
+            putBE(0x0a, 300, 2); putBE(0x0c, 800, 2)
+            putBE(0x16, calibrationPlaneStride / 3, 4); putBE(0x1a, 16, 4)
+            bytes[0x31] = 0x80; bytes[0x32] = 0x80; bytes[0x34] = 0x10
+            putBE(0x39, protocolXResolution, 2)
+        case .sendCalibration:
+            putBE(0x0a, 300, 2); putBE(0x0c, 800, 2)
+            putBE(0x16, calibrationLineStride / 3, 4); putBE(0x1a, 1, 4)
+            bytes[0x34] = 0x10; putBE(0x39, protocolXResolution, 2)
+        case .scan:
+            putBE(0x0a, protocolXResolution, 2); putBE(0x0c, protocolYResolution, 2)
+            putBE(0x16, rawPlaneStride / 3, 4); putBE(0x1a, scanHeight, 4)
+            bytes[0x31] = 0x80; bytes[0x32] = 0x80; bytes[0x33] = 0x01
+            bytes[0x34] = UInt8(clamping: blockHeight)
+        }
+        return Data(bytes)
+    }
+
+    private static func repeatedPair(_ first: UInt8, _ second: UInt8, count: Int) -> [UInt8] {
+        Array(repeating: [first, second], count: count).flatMap { $0 }
+    }
+}
+
+private struct EpjitsuPageRasterizer {
+    private let acquisition: EpjitsuAcquisitionProfile
+    private let requestedResolution: Int
+    private let width: Int
+    private let height: Int
+    private let ySkip: Int
+    private let xStart: Int
+    private let sides: [(PageSide, Int)]
+    private var pagePixels: [[UInt8]]
+
+    init(acquisition: EpjitsuAcquisitionProfile, requestedResolution: Int, source: ScanSource) {
+        self.acquisition = acquisition
+        self.requestedResolution = requestedResolution
+        width = max(1, Int((8.5 * Double(requestedResolution)).rounded()))
+        height = max(1, Int((11.5 * Double(requestedResolution)).rounded()))
+        ySkip = Int((0.5 * Double(acquisition.protocolYResolution)).rounded())
+        let desiredRawWidth = Int((Double(width) * Double(acquisition.protocolXResolution) / Double(requestedResolution)).rounded())
+        xStart = max(0, (acquisition.rawPlaneWidth - desiredRawWidth) / 2)
+        switch source {
+        case .adfBack: sides = [(.back, 1)]
+        case .adfDuplex: sides = [(.front, 0), (.back, 1)]
+        default: sides = [(.front, 0)]
+        }
+        let pageCount = sides.count
+        let pixelCount = width * height * 3
+        pagePixels = Array(repeating: [UInt8](repeating: 0, count: pixelCount), count: pageCount)
+    }
+
+    mutating func consume(_ raw: Data, startingAt rawLine: Int) {
+        let bytes = [UInt8](raw)
+        let lineCount = bytes.count / acquisition.rawLineStride
+        for line in 0..<lineCount {
+            let sourceY = rawLine + line
+            guard sourceY >= ySkip else { continue }
+            let outputY = Int(Double(sourceY - ySkip) * Double(requestedResolution) / Double(acquisition.protocolYResolution))
+            guard outputY >= 0, outputY < height else { continue }
+            let row = line * acquisition.rawLineStride
+
+            for outputX in 0..<width {
+                let sourceX = min(acquisition.rawPlaneWidth - 1, xStart + Int(Double(outputX) * Double(acquisition.protocolXResolution) / Double(requestedResolution)))
+                let base = row + sourceX * 3
+                let destination = (outputY * width + outputX) * 3
+                for pageIndex in sides.indices {
+                    let page = sides[pageIndex].1
+                    let blue = bytes[base + page]
+                    let red = bytes[base + acquisition.rawPlaneStride + page]
+                    let green = bytes[base + acquisition.rawPlaneStride * 2 + page]
+                    pagePixels[pageIndex][destination] = red
+                    pagePixels[pageIndex][destination + 1] = green
+                    pagePixels[pageIndex][destination + 2] = blue
+                }
+            }
+        }
+    }
+
+    func finish() throws -> [EpjitsuAcquiredPage] {
+        try zip(sides, pagePixels).map { side, pixels in
+            guard let bitmap = NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: width,
+                pixelsHigh: height,
+                bitsPerSample: 8,
+                samplesPerPixel: 3,
+                hasAlpha: false,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: width * 3,
+                bitsPerPixel: 24
+            ), let destination = bitmap.bitmapData else {
+                throw ScannerError.outputFailed("Could not create an image buffer for epjitsu acquisition.")
+            }
+            pixels.withUnsafeBytes { bytes in
+                if let baseAddress = bytes.baseAddress {
+                    destination.update(from: baseAddress.assumingMemoryBound(to: UInt8.self), count: pixels.count)
+                }
+            }
+            guard let jpeg = bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.88]) else {
+                throw ScannerError.outputFailed("Could not encode the epjitsu image as JPEG.")
+            }
+            return EpjitsuAcquiredPage(side: side.0, width: width, height: height, resolutionDPI: requestedResolution, data: jpeg)
+        }
+    }
+}
+
 final class EpjitsuCommandEngine {
     static let firmwarePayloadLength = 0x10000
 
@@ -297,6 +521,43 @@ final class EpjitsuCommandEngine {
     init(transport: USBDeviceTransport, profile: EpjitsuScanSnapModelProfile = .s300) {
         self.transport = transport
         self.profile = profile
+    }
+
+    fileprivate func scan(
+        options: ScanOptions,
+        onPage: @escaping (EpjitsuAcquiredPage) async throws -> Void
+    ) async throws {
+        let acquisition = try EpjitsuAcquisitionProfile.make(model: profile, requestedResolution: options.acquisition.resolutionDPI)
+        let rawHeight = Int((12.0 * Double(acquisition.protocolYResolution)).rounded())
+
+        guard try await objectPosition(ingest: true) else {
+            throw ScannerError.feederEmpty
+        }
+        try await calibrate(acquisition: acquisition)
+
+        var sheetCount = 0
+        while !Task.isCancelled {
+            try await setWindow(acquisition.window(.scan, scanHeight: rawHeight))
+            try await commandExpectingAcknowledgement([0x1b, 0xd6], label: "scan")
+            var rasterizer = EpjitsuPageRasterizer(
+                acquisition: acquisition,
+                requestedResolution: options.acquisition.resolutionDPI,
+                source: options.acquisition.source
+            )
+            try await readRawScan(acquisition: acquisition, height: rawHeight) { block, startingAt in
+                rasterizer.consume(block, startingAt: startingAt)
+            }
+            let pages = try rasterizer.finish()
+            for page in pages {
+                try await onPage(page)
+            }
+            sheetCount += 1
+            ScanTrace.post("Finished epjitsu sheet \(sheetCount).")
+
+            guard try await objectPosition(ingest: true) else { break }
+        }
+        if Task.isCancelled { throw ScannerError.scanCancelled }
+        try? await lamp(on: false)
     }
 
     func prepare(firmwarePayload: Data?) async throws -> EpjitsuProtocolIdentity {
@@ -342,6 +603,143 @@ final class EpjitsuCommandEngine {
         )
     }
 
+    private func calibrate(acquisition: EpjitsuAcquisitionProfile) async throws {
+        // The S300-family requires a calibration exchange before the first
+        // image. The default coarse/fine tables are valid scanner values; the
+        // scanner then applies its own line samples while the host drains the
+        // calibration transfers. This avoids bundling vendor firmware or
+        // model-specific calibration blobs in the application.
+        let coarse = Data([
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x2d, 0x00, 0x2b,
+            0x00, 0x00, 0x00, 0x24, 0x00, 0x28, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00
+        ])
+
+        try await lamp(on: false)
+        try await setWindow(acquisition.window(.coarseCalibration))
+        try await sendCommandWithPayload([0x1b, 0xc6], payload: coarse, label: "coarse calibration")
+        try await commandExpectingAcknowledgement([0x1b, 0xd2], label: "coarse calibration scan")
+        _ = try await readTransfer(length: acquisition.calibrationLineStride + 8, label: "coarse calibration data")
+
+        try await lamp(on: true)
+        try await sendCommandWithPayload([0x1b, 0xc6], payload: coarse, label: "light calibration")
+        try await commandExpectingAcknowledgement([0x1b, 0xd2], label: "light calibration scan")
+        _ = try await readTransfer(length: acquisition.calibrationLineStride + 8, label: "light calibration data")
+
+        try await setWindow(acquisition.window(.sendCalibration))
+        var calibrationData = Data(count: acquisition.calibrationLineStride * 2)
+        calibrationData.withUnsafeMutableBytes { rawBuffer in
+            guard let pointer = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            for index in stride(from: 1, to: acquisition.calibrationLineStride * 2, by: 2) {
+                pointer[index] = 0xff
+            }
+        }
+        try await sendCommandWithPayload(
+            [0x1b, 0xc3],
+            payload: Data(acquisition.gainHeader) + calibrationData,
+            label: "gain calibration"
+        )
+        try await sendCommandWithPayload(
+            [0x1b, 0xc4],
+            payload: Data(acquisition.offsetHeader) + calibrationData,
+            label: "offset calibration"
+        )
+
+        try await setWindow(acquisition.window(.fineCalibration))
+        try await commandExpectingAcknowledgement([0x1b, 0xd2], label: "fine calibration scan")
+        _ = try await readTransfer(length: acquisition.calibrationLineStride * 16 + 8, label: "fine calibration data")
+
+        var lut = Data(count: 0x6000)
+        lut.withUnsafeMutableBytes { rawBuffer in
+            guard let pointer = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            let width = 0x1000
+            for index in 0..<width {
+                let value = index << 4
+                for plane in 0..<3 {
+                    let offset = plane * width * 2 + index * 2
+                    pointer[offset] = UInt8(value & 0xff)
+                    pointer[offset + 1] = UInt8((value >> 8) & 0x0f)
+                }
+            }
+        }
+        try await sendCommandWithPayload([0x1b, 0xc5], payload: lut, label: "tone curve")
+        try await lamp(on: true)
+    }
+
+    private func setWindow(_ payload: Data) async throws {
+        try await commandExpectingAcknowledgement([0x1b, 0xd1], label: "set window command")
+        try await writeAndExpectAcknowledgement(payload, label: "set window payload")
+    }
+
+    private func lamp(on: Bool) async throws {
+        try await commandExpectingAcknowledgement([0x1b, 0xd0], label: "lamp command")
+        try await writeAndExpectAcknowledgement(Data([on ? 1 : 0]), label: "lamp payload")
+    }
+
+    private func objectPosition(ingest: Bool) async throws -> Bool {
+        try await commandExpectingAcknowledgement([0x1b, 0xd4], label: "paper position command")
+        try await write([UInt8(ingest ? 5 : 1)])
+        let response = try await readExactly(1, label: "paper position response")
+        switch response.first {
+        case 0x06: return true
+        case 0x00, 0x15: return false
+        default:
+            throw ScannerError.transportUnavailable("\(profile.name) returned an unexpected paper-position status.")
+        }
+    }
+
+    private func readRawScan(
+        acquisition: EpjitsuAcquisitionProfile,
+        height: Int,
+        consume: (Data, Int) -> Void
+    ) async throws {
+        let total = acquisition.rawLineStride * height
+        let maxPayload = 512 * 1024 - 8
+        let linesPerBlock = max(1, maxPayload / acquisition.rawLineStride)
+        var remaining = total
+        var startingLine = 0
+
+        while remaining > 0 {
+            try await commandExpectingAcknowledgement([0x1b, 0xd3], label: "image block")
+            let payloadLength = min(remaining, linesPerBlock * acquisition.rawLineStride)
+            let packet = try await readTransfer(length: payloadLength + 8, label: "image data")
+            guard packet.count >= payloadLength + 8 else {
+                throw ScannerError.transportUnavailable("\(profile.name) returned a short image block.")
+            }
+            consume(Data(packet.prefix(payloadLength)), startingLine)
+            startingLine += payloadLength / acquisition.rawLineStride
+            remaining -= payloadLength
+        }
+    }
+
+    private func sendCommandWithPayload(_ command: [UInt8], payload: Data, label: String) async throws {
+        try await commandExpectingAcknowledgement(command, label: "\(label) command")
+        try await writeAndExpectAcknowledgement(payload, label: "\(label) payload")
+    }
+
+    private func writeAndExpectAcknowledgement(_ payload: Data, label: String) async throws {
+        try await transport.bulkWrite(endpoint: 0, data: payload, timeoutMilliseconds: dataTimeout)
+        let response = try await readExactly(1, label: label)
+        guard response.first == 0x06 else {
+            let value = response.first.map { String(format: "0x%02x", $0) } ?? "none"
+            throw ScannerError.transportUnavailable("\(profile.name) \(label) returned \(value), expected ACK 0x06.")
+        }
+    }
+
+    private func readTransfer(length: Int, label: String) async throws -> Data {
+        var result = Data(); result.reserveCapacity(length)
+        while result.count < length {
+            let remaining = length - result.count
+            let chunk = try await transport.bulkRead(endpoint: 0, length: remaining, timeoutMilliseconds: dataTimeout)
+            guard !chunk.isEmpty else {
+                throw ScannerError.transportUnavailable("\(profile.name) returned no bytes for \(label).")
+            }
+            result.append(chunk.prefix(remaining))
+        }
+        return result
+    }
+
     func uploadFirmware(_ payload: Data) async throws {
         guard payload.count == Self.firmwarePayloadLength else {
             throw ScannerError.transportUnavailable(
@@ -377,13 +775,7 @@ final class EpjitsuCommandEngine {
     }
 
     private func readExactly(_ length: Int, label: String) async throws -> Data {
-        let data = try await transport.bulkRead(endpoint: 0, length: length, timeoutMilliseconds: dataTimeout)
-        guard data.count == length else {
-            throw ScannerError.transportUnavailable(
-                "\(profile.name) \(label) returned \(data.count) bytes; expected \(length)."
-            )
-        }
-        return data
+        try await readTransfer(length: length, label: label)
     }
 
     private static func ascii(_ bytes: ArraySlice<UInt8>) -> String {

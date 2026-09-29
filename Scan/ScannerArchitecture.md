@@ -151,13 +151,16 @@ the model-matching `300_0C00.nal`, `300M_0C00.nal`, `1300_0C26.nal`, or
 per model. An old S300 bookmark is migrated only for the S300 profile and is
 still checked against the expected filename.
 
-The common epjitsu bootstrap is preliminary support, not a working scanner
-pipeline: calibrated image acquisition is not implemented, so `startScan()`
-returns `protocolNotImplemented` after a successful initialization. S300/S300M
-retain the documented experimental button interpretation; S1300/S1300i expose
-the `0x1b/0x33` status path as `supportedUnvalidated` without assuming its
-button bit, and one-touch scanning remains disabled. S1100/S1100i are not
-claimed until their IDs and behavior can be represented without false support.
+The common epjitsu path now performs the direct-USB acquisition exchange:
+paper ingest, calibration transfer draining, scan-window setup, line-aligned
+image blocks, front/back plane reconstruction, and JPEG page emission. The
+implemented capability is intentionally limited to experimental color ADF
+scanning; grayscale, line-art, and one-touch scanning remain unavailable or
+unvalidated until they are exercised on hardware. S300/S300M retain the
+documented experimental button interpretation; S1300/S1300i expose the
+`0x1b/0x33` status path as `supportedUnvalidated` without assuming its button
+bit. S1100/S1100i are not claimed until their IDs and behavior can be
+represented without false support.
 
 ## Image Capture backend and discovery
 
