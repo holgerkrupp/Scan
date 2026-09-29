@@ -2,6 +2,15 @@ Native macOS scanning app with direct USB support for Fujitsu ScanSnap and
 fi-series document scanners, including legacy models and the ScanSnap
 iX1300, iX1400, iX1500, and iX1600.
 
+# Scanner Compatibility List
+
+Help us expand support! [Click here to submit your scanner report](https://github.com/YOUR-USERNAME/YOUR-REPO/issues/new?template=scanner_report.yml).
+
+| Brand & Model | Status | OS | Notes |
+| :--- | :--- | :--- | :--- |
+| Fujitsu ScanSnap iX1600 | 🟢 Working | macOS 15 | Plug-and-play, no extra drivers needed. |
+| Canon CanoScan LiDE 300 | 🔴 Not Working | Ubuntu 24.04 | USB backend driver fails to initialize. |
+
 ## Building
 
 Signing uses the team set in `Config/Shared.xcconfig`. To build with your own
