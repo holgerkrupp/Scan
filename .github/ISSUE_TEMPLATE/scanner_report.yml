@@ -29,7 +29,7 @@ body:
       required: true
 
   - type: dropdown
-    id: status
+    id: button
     attributes:
       label: Working Status
       description: Is the hardware button functional (does ist start a scan)?
