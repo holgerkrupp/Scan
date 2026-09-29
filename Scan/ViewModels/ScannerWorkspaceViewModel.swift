@@ -552,7 +552,6 @@ final class ScannerWorkspaceViewModel {
         let store = ScanPageStore(); pageStore = store
         let transport: USBDeviceTransport? = selectedIdentity.connectionKind == .usb ? IOKitUSBDeviceTransport(identity: selectedIdentity) : nil
         let device = driver.makeDevice(identity: selectedIdentity, transport: transport); activeDevice = device
-        defer { activeDevice = nil; isScanning = false }
         do {
             try await device.open()
             capabilities = device.capabilities
@@ -571,6 +570,8 @@ final class ScannerWorkspaceViewModel {
             else { status = .error(error.localizedDescription); log("Scan failed: \(error.localizedDescription)") }
         }
         await device.close()
+        // Clear the scan state before restarting, as restartHardwareMonitoring() skips the restart while isScanning is true.
+        activeDevice = nil; isScanning = false
         await restartHardwareMonitoring()
     }
 
