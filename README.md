@@ -8,8 +8,6 @@ Help us expand support! [Click here to submit your scanner report](https://githu
 
 | Brand & Model | Status | OS | Notes |
 | :--- | :--- | :--- | :--- |
-| Fujitsu ScanSnap iX1600 | 🟢 Working | macOS 15 | Plug-and-play, no extra drivers needed. |
-| Canon CanoScan LiDE 300 | 🔴 Not Working | Ubuntu 24.04 | USB backend driver fails to initialize. |
 
 ## Building
 
