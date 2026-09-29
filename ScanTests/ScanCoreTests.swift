@@ -313,14 +313,47 @@ final class ScanCoreTests: XCTestCase {
         XCTAssertEqual(transport.capturedWrites(), [Data([0x1b, 0x03]), Data([0x1b, 0x13])])
     }
 
-    func testEpjitsu1300FamilyButtonSupportIsUnvalidatedAndNeverOneTouch() {
-        for (productID, profile) in [(UInt16(0x11ed), EpjitsuScanSnapModelProfile.s1300), (0x128d, .s1300i)] {
+    func testEpjitsu1300FamilyButtonSupport() {
+        for (productID, profile, support, oneTouch) in [
+            (UInt16(0x11ed), EpjitsuScanSnapModelProfile.s1300, ScannerHardwareEventSupportState.supportedUnvalidated, false),
+            (0x128d, .s1300i, .supportedValidated, true)
+        ] {
             let identity = usbIdentity(productID)
             let device = EpjitsuScanSnapDriver(firmwareProvider: { nil }).makeDevice(identity: identity, transport: nil)
             let events = (device as! ScannerHardwareEventSource).hardwareEventCapabilities
-            XCTAssertEqual(events.scanButton, ScannerHardwareEventSupportState.supportedUnvalidated, profile.name)
-            XCTAssertFalse(events.supportsOneTouchScanning, profile.name)
+            XCTAssertEqual(events.scanButton, support, profile.name)
+            XCTAssertEqual(events.supportsOneTouchScanning, oneTouch, profile.name)
         }
+    }
+
+    func testOnlyTheS1300iUsesTheS1300iAcquisitionFlow() {
+        XCTAssertEqual(EpjitsuScanSnapModelProfile.s1300i.protocolFamily, .s1300i)
+        for profile in [EpjitsuScanSnapModelProfile.s300, .s300M, .s1300] {
+            XCTAssertEqual(profile.protocolFamily, .s300, profile.name)
+        }
+    }
+
+    func testS1300iOnACPowerUsesItsOwnGeometryAndWindows() throws {
+        let settings = try EpjitsuResolutionSettings.s1300i(usbPower: false, requestedResolution: 300)
+        XCTAssertEqual(settings.lineStride, 8096 * 3)
+        XCTAssertEqual(settings.blockHeight, 21)
+        XCTAssertTrue(settings.shiftsColorPlanes)
+        XCTAssertEqual(settings.coarseCalibrationWindow, EpjitsuProtocolTables.setWindowCoarseCalS1300i300)
+        // Height 3600 (12 in) as captured from the vendor protocol.
+        let window = [UInt8](settings.scanWindow(height: 3600))
+        XCTAssertEqual(Array(window[0x18..<0x1e]), [0x0a, 0xc0, 0x00, 0x00, 0x0e, 0x10])
+        XCTAssertEqual(window[0x34], 21)
+    }
+
+    func testS1300iOnUSBPowerUsesS300WindowsWithItsCalibrationHeaders() throws {
+        let settings = try EpjitsuResolutionSettings.s1300i(usbPower: true, requestedResolution: 200)
+        XCTAssertEqual(settings.xResolution, 225)
+        XCTAssertEqual(settings.yResolution, 200)
+        XCTAssertEqual(settings.lineStride, 10584 * 3)
+        XCTAssertFalse(settings.shiftsColorPlanes)
+        XCTAssertEqual(settings.scanWindow, EpjitsuProtocolTables.setWindowScanS300225U)
+        XCTAssertEqual(settings.gainHeader, EpjitsuProtocolTables.sendCal1HeaderS1300iUSB)
+        XCTAssertThrowsError(try EpjitsuResolutionSettings.s1300i(usbPower: false, requestedResolution: 1200))
     }
 
     func testS300FirmwareContainerDropsHeaderAndRequiresFullPayload() throws {
