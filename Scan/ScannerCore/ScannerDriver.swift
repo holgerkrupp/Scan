@@ -110,6 +110,7 @@ final class ScannerDriverRegistry {
         drivers: [
             EpjitsuScanSnapDriver(),
             FujitsuScanSnapS1500Driver(),
+            FujitsuScanSnapS1300iDriver(),
             FujitsuScanSnapIX500Driver(),
             FujitsuScanSnapIX1500Driver(),
             FujitsuScanSnapIX1600Driver(),
