@@ -31,7 +31,7 @@ body:
   - type: dropdown
     id: button
     attributes:
-      label: Working Status
+      label: Hardware Button Status
       description: Is the hardware button functional (does ist start a scan)?
       options:
         - "🟢 Working"
