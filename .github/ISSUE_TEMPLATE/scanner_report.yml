@@ -1,0 +1,47 @@
+name: Submit Scanner Report
+description: Add a scanner model and report whether it works with the tool.
+title: "[Scanner]: "
+labels: ["scanner-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping build our scanner compatibility database!
+
+  - type: input
+    id: scanner_model
+    attributes:
+      label: Scanner Brand & Model
+      description: Enter the full manufacturer and model name.
+      placeholder: e.g., Fujitsu ScanSnap iX1600 or Canon CanoScan LiDE 300
+    validations:
+      required: true
+
+  - type: dropdown
+    id: status
+    attributes:
+      label: Working Status
+      description: Is the scanner functional with the tool?
+      options:
+        - "🟢 Working"
+        - "🔴 Not Working"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: status
+    attributes:
+      label: Working Status
+      description: Is the hardware button functional (does ist start a scan)?
+      options:
+        - "🟢 Working"
+        - "🔴 Not Working"
+        - "❌ No Button on the scanner"
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Setup Notes
+      description: workarounds, or specific issues encountered.
