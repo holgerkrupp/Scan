@@ -4,7 +4,7 @@ iX1300, iX1400, iX1500, and iX1600.
 
 # Scanner Compatibility List
 
-Help us expand support! [Click here to submit your scanner report](https://github.com/YOUR-USERNAME/YOUR-REPO/issues/new?template=scanner_report.yml).
+Help us expand support! [Click here to submit your scanner report](https://github.com/holgerkrupp/Scan/issues/new?template=scanner_report.yml).
 
 | Brand & Model | Status | OS | Notes |
 | :--- | :--- | :--- | :--- |
