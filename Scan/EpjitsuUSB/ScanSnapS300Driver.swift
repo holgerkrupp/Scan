@@ -24,6 +24,7 @@ struct EpjitsuScanSnapModelProfile: Equatable, Sendable {
     let supportsOneTouchScanning: Bool
     let hardwareButtonInterpretation: EpjitsuHardwareButtonInterpretation
     let hardwareStatusResponseLength: Int
+    let protocolFamily: EpjitsuProtocolFamily
 
     static let s300 = EpjitsuScanSnapModelProfile(
         name: "Fujitsu ScanSnap S300",
@@ -64,9 +65,10 @@ struct EpjitsuScanSnapModelProfile: Equatable, Sendable {
         expectedFirmwareFileNames: ["1300i_0D12.nal"],
         firmwareBookmarkKey: "scan.epjitsu.s1300iFirmwareBookmark",
         supportsDuplex: true,
-        hardwareButtonSupport: .supportedUnvalidated,
-        supportsOneTouchScanning: false,
-        hardwareButtonInterpretation: .unvalidated
+        hardwareButtonSupport: .supportedValidated,
+        supportsOneTouchScanning: true,
+        hardwareButtonInterpretation: .s300Byte1Bit0,
+        protocolFamily: .s1300i
     )
 
     nonisolated static let all: [EpjitsuScanSnapModelProfile] = [.s300, .s300M, .s1300, .s1300i]
@@ -83,7 +85,8 @@ struct EpjitsuScanSnapModelProfile: Equatable, Sendable {
         supportsDuplex: Bool,
         hardwareButtonSupport: ScannerHardwareEventSupportState,
         supportsOneTouchScanning: Bool,
-        hardwareButtonInterpretation: EpjitsuHardwareButtonInterpretation
+        hardwareButtonInterpretation: EpjitsuHardwareButtonInterpretation,
+        protocolFamily: EpjitsuProtocolFamily = .s300
     ) {
         self.name = name
         self.usbDeviceIDs = usbDeviceIDs
@@ -94,6 +97,7 @@ struct EpjitsuScanSnapModelProfile: Equatable, Sendable {
         self.supportsOneTouchScanning = supportsOneTouchScanning
         self.hardwareButtonInterpretation = hardwareButtonInterpretation
         self.hardwareStatusResponseLength = 4
+        self.protocolFamily = protocolFamily
         self.capabilities = ScannerCapabilities(
             sources: [.adfFront, .adfBack, .adfDuplex],
             colorModes: [.color],
@@ -189,6 +193,9 @@ final class EpjitsuScanSnapDevice: ScannerDevice, ScannerHardwareEventSource {
         do {
             try await transport.open()
             let engine = EpjitsuCommandEngine(transport: transport, profile: profile)
+            if profile.protocolFamily == .s1300i {
+                await engine.discardStaleInput()
+            }
             let scannerIdentity = try await engine.prepare(firmwarePayload: try firmwareProvider())
             commandEngine = engine
             status = .idle
@@ -267,6 +274,17 @@ final class EpjitsuScanSnapDevice: ScannerDevice, ScannerHardwareEventSource {
     }
 
     func stopHardwareEventObservation() async {
+        if profile.protocolFamily == .s1300i {
+            // Let the poller finish its status exchange instead of aborting
+            // the pipes: an aborted 1b 33 leaves its reply queued in the
+            // scanner, and the next session would read it as the answer to its
+            // own command. Concurrent callers wait for the same poller.
+            guard let task = hardwareEventTask else { return }
+            task.cancel()
+            await task.value
+            if hardwareEventTask == task { hardwareEventTask = nil }
+            return
+        }
         let wasObserving = hardwareEventTask != nil
         hardwareEventTask?.cancel()
         hardwareEventTask = nil
@@ -287,13 +305,17 @@ final class EpjitsuScanSnapDevice: ScannerDevice, ScannerHardwareEventSource {
         while !Task.isCancelled {
             do {
                 let bytes = [UInt8](try await commandEngine.readHardwareStatus())
-                guard bytes.count >= 2 else {
-                    continuation.yield(.diagnostic("\(profile.name) returned a short hardware-status response."))
-                    return
+                if bytes.count < 2, profile.protocolFamily == .s1300i {
+                    // A one-byte NAK: the S1300i is busy, poll again later.
+                } else {
+                    guard bytes.count >= 2 else {
+                        continuation.yield(.diagnostic("\(profile.name) returned a short hardware-status response."))
+                        return
+                    }
+                    let isPressed = (bytes[1] & 0x01) != 0
+                    if isPressed, !wasPressed { continuation.yield(.scanButtonPressed) }
+                    wasPressed = isPressed
                 }
-                let isPressed = (bytes[1] & 0x01) != 0
-                if isPressed, !wasPressed { continuation.yield(.scanButtonPressed) }
-                wasPressed = isPressed
             } catch is CancellationError {
                 return
             } catch {
@@ -314,7 +336,7 @@ struct EpjitsuProtocolIdentity: Equatable {
     let model: String
 }
 
-private struct EpjitsuAcquiredPage {
+nonisolated struct EpjitsuAcquiredPage: Sendable {
     let side: PageSide
     let width: Int
     let height: Int
@@ -513,10 +535,13 @@ private struct EpjitsuPageRasterizer {
 final class EpjitsuCommandEngine {
     static let firmwarePayloadLength = 0x10000
 
-    private let transport: USBDeviceTransport
-    private let profile: EpjitsuScanSnapModelProfile
-    private let commandTimeout: UInt32 = 10_000
-    private let dataTimeout: UInt32 = 10_000
+    let transport: USBDeviceTransport
+    let profile: EpjitsuScanSnapModelProfile
+    let commandTimeout: UInt32 = 10_000
+    let dataTimeout: UInt32 = 10_000
+    /// Bit 0 of the status byte: powered from the USB bus instead of the AC
+    /// adapter. The S1300i uses different protocol tables for each.
+    private(set) var usbPower = false
 
     init(transport: USBDeviceTransport, profile: EpjitsuScanSnapModelProfile = .s300) {
         self.transport = transport
@@ -527,6 +552,10 @@ final class EpjitsuCommandEngine {
         options: ScanOptions,
         onPage: @escaping (EpjitsuAcquiredPage) async throws -> Void
     ) async throws {
+        if profile.protocolFamily == .s1300i {
+            try await scanS1300i(options: options, onPage: onPage)
+            return
+        }
         let acquisition = try EpjitsuAcquisitionProfile.make(model: profile, requestedResolution: options.acquisition.resolutionDPI)
         let rawHeight = Int((12.0 * Double(acquisition.protocolYResolution)).rounded())
 
@@ -576,6 +605,7 @@ final class EpjitsuCommandEngine {
         } else {
             ScanTrace.post("\(profile.name) firmware is already loaded.")
         }
+        usbPower = status & 0x01 != 0
         return try await readIdentity()
     }
 
@@ -590,6 +620,9 @@ final class EpjitsuCommandEngine {
     /// but their button bits are deliberately not interpreted.
     func readHardwareStatus() async throws -> Data {
         try await write([0x1b, 0x33])
+        if profile.protocolFamily == .s1300i {
+            return try await readS1300iHardwareStatusReply()
+        }
         return try await readExactly(profile.hardwareStatusResponseLength, label: "hardware status")
     }
 
@@ -667,12 +700,12 @@ final class EpjitsuCommandEngine {
         try await lamp(on: true)
     }
 
-    private func setWindow(_ payload: Data) async throws {
+    func setWindow(_ payload: Data) async throws {
         try await commandExpectingAcknowledgement([0x1b, 0xd1], label: "set window command")
         try await writeAndExpectAcknowledgement(payload, label: "set window payload")
     }
 
-    private func lamp(on: Bool) async throws {
+    func lamp(on: Bool) async throws {
         try await commandExpectingAcknowledgement([0x1b, 0xd0], label: "lamp command")
         try await writeAndExpectAcknowledgement(Data([on ? 1 : 0]), label: "lamp payload")
     }
@@ -713,12 +746,12 @@ final class EpjitsuCommandEngine {
         }
     }
 
-    private func sendCommandWithPayload(_ command: [UInt8], payload: Data, label: String) async throws {
+    func sendCommandWithPayload(_ command: [UInt8], payload: Data, label: String) async throws {
         try await commandExpectingAcknowledgement(command, label: "\(label) command")
         try await writeAndExpectAcknowledgement(payload, label: "\(label) payload")
     }
 
-    private func writeAndExpectAcknowledgement(_ payload: Data, label: String) async throws {
+    func writeAndExpectAcknowledgement(_ payload: Data, label: String) async throws {
         try await transport.bulkWrite(endpoint: 0, data: payload, timeoutMilliseconds: dataTimeout)
         let response = try await readExactly(1, label: label)
         guard response.first == 0x06 else {
@@ -761,7 +794,7 @@ final class EpjitsuCommandEngine {
         ScanTrace.post("\(profile.name) firmware upload acknowledged.")
     }
 
-    private func commandExpectingAcknowledgement(_ bytes: [UInt8], label: String) async throws {
+    func commandExpectingAcknowledgement(_ bytes: [UInt8], label: String) async throws {
         try await write(bytes)
         let response = try await readExactly(1, label: label)
         guard response.first == 0x06 else {
@@ -770,11 +803,11 @@ final class EpjitsuCommandEngine {
         }
     }
 
-    private func write(_ bytes: [UInt8]) async throws {
+    func write(_ bytes: [UInt8]) async throws {
         try await transport.bulkWrite(endpoint: 0, data: Data(bytes), timeoutMilliseconds: commandTimeout)
     }
 
-    private func readExactly(_ length: Int, label: String) async throws -> Data {
+    func readExactly(_ length: Int, label: String) async throws -> Data {
         try await readTransfer(length: length, label: label)
     }
 

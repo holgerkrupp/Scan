@@ -16,6 +16,9 @@ import XCTest
 /// - `SCAN_HW_BUFFER` (`1` enables the scanner's ADF read-ahead buffering)
 /// - `SCAN_HW_JPEG` (`1` asks the scanner for hardware JPEG), `SCAN_HW_JPEG_QUALITY` (export quality 0.4-1.0 that picks the Q argument)
 /// - `SCAN_HW_OUTPUT_DIR` (directory that receives the page JPEGs and trace log)
+/// - `SCAN_HW_EPJITSU_FIRMWARE` (path to the `.nal` firmware file an epjitsu
+///   model such as the S1300i uploads after power-on, instead of the file
+///   selected in the app)
 ///
 /// Profile experiments on a Fujitsu SCSI-over-USB model, each optional and
 /// applied on top of the registry profile so that quirks can be tried on a
@@ -182,6 +185,13 @@ final class FujitsuScanSnapHardwareTests: XCTestCase {
     }
 
     private func makeDevice(driver: ScannerDriver, identity: ScannerIdentity, transport: USBDeviceTransport, collector: TraceCollector) -> ScannerDevice {
+        if driver is EpjitsuScanSnapDriver, let path = environment["SCAN_HW_EPJITSU_FIRMWARE"] {
+            collector.append("Epjitsu firmware: \(path)")
+            let firmwareDriver = EpjitsuScanSnapDriver(firmwareProvider: {
+                try EpjitsuScanSnapFirmwareStore.extractPayload(from: Data(contentsOf: URL(fileURLWithPath: path)))
+            })
+            return firmwareDriver.makeDevice(identity: identity, transport: transport)
+        }
         let device = driver.makeDevice(identity: identity, transport: transport)
         guard let fujitsu = device as? FujitsuScanSnapDevice, let profile = experimentalProfile(basedOn: fujitsu.profile) else {
             return device

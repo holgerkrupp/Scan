@@ -13,6 +13,8 @@ final class HardwareScanCoordinator {
     private var task: Task<Void, Never>?
     private var activeDevice: ScannerDevice?
     private var activeSource: ScannerHardwareEventSource?
+    /// Set while monitoring a scanner that needs `requiresExclusiveSession`.
+    private var stopWaitsForMonitor = false
 
     init(
         registry: ScannerDriverRegistry,
@@ -24,13 +26,40 @@ final class HardwareScanCoordinator {
         self.onDiagnostic = onDiagnostic
     }
 
+    /// The S1300i stops responding when two sessions talk to it at once or a
+    /// session is closed in the middle of a command, so its monitor is
+    /// replaced only after the previous one has released the scanner.
+    private static func requiresExclusiveSession(_ identity: ScannerIdentity) -> Bool {
+        identity.usbDeviceID.flatMap(EpjitsuScanSnapModelProfile.profile(for:)) == .s1300i
+    }
+
     func start(identity: ScannerIdentity) {
+        stopWaitsForMonitor = Self.requiresExclusiveSession(identity)
+        if stopWaitsForMonitor {
+            let previous = task
+            previous?.cancel()
+            task = Task { [weak self] in
+                await previous?.value
+                guard !Task.isCancelled else { return }
+                await self?.monitor(identity: identity)
+            }
+            return
+        }
         task = Task { [weak self] in
             await self?.monitor(identity: identity)
         }
     }
 
     func stop() async {
+        if stopWaitsForMonitor {
+            // The monitor closes its own device on the way out.
+            guard let task else { return }
+            self.task = nil
+            task.cancel()
+            await activeSource?.stopHardwareEventObservation()
+            await task.value
+            return
+        }
         task?.cancel()
         task = nil
         await activeSource?.stopHardwareEventObservation()
@@ -40,6 +69,7 @@ final class HardwareScanCoordinator {
     }
 
     private func monitor(identity: ScannerIdentity) async {
+        let closesOnCancellation = Self.requiresExclusiveSession(identity)
         while !Task.isCancelled {
             guard let driver = registry.driver(for: identity) else { return }
             let transport: USBDeviceTransport? = identity.connectionKind == .usb ? IOKitUSBDeviceTransport(identity: identity) : nil
@@ -60,7 +90,8 @@ final class HardwareScanCoordinator {
                     onEvent(identity, capabilities, event)
                 }
             } catch is CancellationError {
-                break
+                // An exclusive-session monitor still closes its device below.
+                guard closesOnCancellation else { break }
             } catch {
                 onDiagnostic("Hardware-button monitoring for \(identity.name) is unavailable: \(error.localizedDescription)")
             }

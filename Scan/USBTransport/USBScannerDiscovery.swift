@@ -134,6 +134,11 @@ final class IOKitUSBDeviceTransport: @unchecked Sendable, USBDeviceTransport {
 
     init(identity: ScannerIdentity) {
         self.identity = identity
+        if let usbDeviceID = identity.usbDeviceID, EpjitsuScanSnapModelProfile.profile(for: usbDeviceID) == .s1300i {
+            hostTransport.clearsEndpointHalts = false
+            hostTransport.configuresUnconfiguredDevice = true
+            hostTransport.usesSharedLibUSBContext = true
+        }
     }
 
     var endpointSummary: String {

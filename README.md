@@ -39,6 +39,7 @@ supports a global profile, per-scanner profile and destination overrides,
 optional launch at login, reconnect retry, and completion/failure
 notifications. Native Fujitsu button polling is validated on the S1500, S510M,
 iX500, and iX1600; other Fujitsu profiles are explicitly marked unvalidated.
+The S1300i's button and one-touch scanning are validated on hardware.
 The S300 reports its physical button experimentally, but one-touch acquisition
 remains unavailable while its image protocol is still incomplete. Image Capture
 button delivery depends on macOS assigning Scan as the scanner's button target.
@@ -102,7 +103,8 @@ The native Fujitsu USB backends recognize the following models:
 | Scanner | USB product ID | Status |
 | --- | --- | --- |
 | ScanSnap S300 / S300M (epjitsu, experimental) | `0x1156` / `0x117f` | Color ADF acquisition implemented; hardware validation and button support remain experimental |
-| ScanSnap S1300 / S1300i (epjitsu, preliminary) | `0x11ed` / `0x128d` | Color ADF acquisition implemented; button support remains unvalidated |
+| ScanSnap S1300 (epjitsu, preliminary) | `0x11ed` | Color ADF acquisition implemented; button support remains unvalidated |
+| ScanSnap S1300i (epjitsu) | `0x128d` | Validated on hardware (AC power): duplex color at 300 dpi, multi-sheet batches with automatic page length, firmware upload after power-on, Scan button and one-touch scanning |
 | ScanSnap S500 / S500M | `0x10fe` / `0x1135` | Protocol profile (S1500 command flow), not yet validated on hardware |
 | ScanSnap S510 / S510M | `0x1155` / `0x116f` | Validated on S510M hardware: duplex color at 300 dpi; optional buffer-page rejection and BGR interlace handled |
 | ScanSnap S1500 / S1500M | `0x11a2` | Validated on hardware |
@@ -184,10 +186,25 @@ implements firmware-status, user-supplied firmware upload/checksum,
 reinitialization, identity, and the common hardware-status exchange. Firmware
 is model-specific (`300_0C00.nal`, `300M_0C00.nal`, `1300_0C26.nal`, or
 `1300i_0D12.nal`), copyrighted, and never bundled; select it under Diagnostics.
-Calibrated image acquisition is not enabled yet, and S1300/S1300i button
-interpretation is unvalidated, so these are preliminary rather than production
-scan support. S1100/S1100i are not claimed.
+For the S300, S300M and S1300, calibrated image acquisition is not enabled
+yet and S1300 button interpretation is unvalidated, so these are preliminary
+rather than production scan support. S1100/S1100i are not claimed.
+
+The S1300i has its own acquisition flow (`EpjitsuS1300iAcquisition.swift`):
+it detects AC or USB bus power, runs the coarse and fine calibration, replays
+the fixed SET WINDOW payloads and calibration headers for its power source and
+resolution, and reads each sheet block by block, ending it at the length the
+scanner reports. It is validated on AC power; USB bus power uses the matching
+tables but is untested. Its USB session needs special handling, enabled for
+the S1300i only: the transport does not clear the bulk endpoints' halt state
+(the scanner does not reset its data toggle and stops responding until it is
+power-cycled), selects a configuration when the scanner comes up unconfigured
+after power-on, and keeps a process-wide libusb context; the hardware-button
+monitor hands the scanner over only after the previous session has closed.
 
 The protocol work is based on the public [SANE epjitsu backend](https://gitlab.com/sane-project/backends/-/tree/master/backend)
 and its [device documentation](https://www.sane-project.org/man/sane-epjitsu.5.html),
 without incorporating the GPL implementation into this MIT-licensed project.
+The fixed S1300i command payloads in `Scan/EpjitsuUSB/EpjitsuProtocolTables.swift`
+are the USB protocol values SANE records in `epjitsu-cmd.h` from traces of
+the vendor driver.

@@ -29,12 +29,26 @@
 @property(nonatomic, copy) NSString *endpointSummary;
 @end
 
+/// The process-wide libusb context for `usesSharedLibUSBContext`, created on
+/// first use and never torn down.
+static libusb_context *ScanSharedLibUSBContext(int *result) {
+    static libusb_context *context = NULL;
+    static int initResult = LIBUSB_SUCCESS;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        initResult = libusb_init(&context);
+    });
+    *result = initResult;
+    return initResult == LIBUSB_SUCCESS ? context : NULL;
+}
+
 @implementation ScanUSBHostTransport
 
 - (instancetype)init {
     self = [super init];
     if (self) {
         _endpointSummary = @"Not opened";
+        _clearsEndpointHalts = YES;
     }
     return self;
 }
@@ -187,7 +201,7 @@
         libusb_release_interface(self.libusbHandle, self.libusbInterfaceNumber);
         libusb_close(self.libusbHandle);
     }
-    if (self.libusbContext) {
+    if (self.libusbContext && !self.usesSharedLibUSBContext) {
         libusb_exit(self.libusbContext);
     }
     if (self.legacyInterface) {
@@ -300,7 +314,9 @@
                 totalTransferred += (NSUInteger)transferred;
             }
             if (result != LIBUSB_SUCCESS) {
-                int clearResult = libusb_clear_halt(self.libusbHandle, self.libusbBulkInEndpoint);
+                int clearResult = (self.clearsEndpointHalts || result == LIBUSB_ERROR_PIPE)
+                    ? libusb_clear_halt(self.libusbHandle, self.libusbBulkInEndpoint)
+                    : LIBUSB_SUCCESS;
                 [self assignError:error
                           message:[NSString stringWithFormat:@"libusb bulk read failed: %s (%d), accumulated %lu/%lu bytes (last %d/%lu); clear halt: %s (%d).",
                                    libusb_error_name(result),
@@ -371,6 +387,9 @@
 
 - (BOOL)abortWithError:(NSError **)error {
     if (self.usingLibUSB) {
+        if (!self.clearsEndpointHalts) {
+            return YES;
+        }
         int inResult = libusb_clear_halt(self.libusbHandle, self.libusbBulkInEndpoint);
         int outResult = libusb_clear_halt(self.libusbHandle, self.libusbBulkOutEndpoint);
         if (inResult != LIBUSB_SUCCESS || outResult != LIBUSB_SUCCESS) {
@@ -421,7 +440,12 @@
                      productID:(UInt16)productID
                           error:(NSError **)error {
     libusb_context *context = NULL;
-    int result = libusb_init(&context);
+    int result = LIBUSB_SUCCESS;
+    if (self.usesSharedLibUSBContext) {
+        context = ScanSharedLibUSBContext(&result);
+    } else {
+        result = libusb_init(&context);
+    }
     if (result != LIBUSB_SUCCESS) {
         [self assignError:error
                   message:[NSString stringWithFormat:@"initialization failed: %s (%d).", libusb_error_name(result), result]
@@ -431,16 +455,31 @@
 
     libusb_device_handle *handle = libusb_open_device_with_vid_pid(context, vendorID, productID);
     if (!handle) {
-        libusb_exit(context);
+        if (!self.usesSharedLibUSBContext) {
+            libusb_exit(context);
+        }
         [self assignError:error message:@"device could not be opened." code:41];
         return NO;
     }
 
     struct libusb_config_descriptor *configuration = NULL;
     result = libusb_get_active_config_descriptor(libusb_get_device(handle), &configuration);
+    if (result == LIBUSB_ERROR_NOT_FOUND && self.configuresUnconfiguredDevice) {
+        struct libusb_config_descriptor *first = NULL;
+        if (libusb_get_config_descriptor(libusb_get_device(handle), 0, &first) == LIBUSB_SUCCESS && first) {
+            uint8_t value = first->bConfigurationValue;
+            libusb_free_config_descriptor(first);
+            result = libusb_set_configuration(handle, value);
+            if (result == LIBUSB_SUCCESS) {
+                result = libusb_get_active_config_descriptor(libusb_get_device(handle), &configuration);
+            }
+        }
+    }
     if (result != LIBUSB_SUCCESS || !configuration) {
         libusb_close(handle);
-        libusb_exit(context);
+        if (!self.usesSharedLibUSBContext) {
+            libusb_exit(context);
+        }
         [self assignError:error
                   message:[NSString stringWithFormat:@"active configuration could not be read: %s (%d).",
                            libusb_error_name(result),
@@ -480,7 +519,9 @@
 
     if (interfaceNumber < 0) {
         libusb_close(handle);
-        libusb_exit(context);
+        if (!self.usesSharedLibUSBContext) {
+            libusb_exit(context);
+        }
         [self assignError:error message:@"no interface exposed bulk IN and OUT endpoints." code:44];
         return NO;
     }
@@ -488,7 +529,9 @@
     result = libusb_claim_interface(handle, interfaceNumber);
     if (result != LIBUSB_SUCCESS) {
         libusb_close(handle);
-        libusb_exit(context);
+        if (!self.usesSharedLibUSBContext) {
+            libusb_exit(context);
+        }
         [self assignError:error
                   message:[NSString stringWithFormat:@"interface %d could not be claimed: %s (%d).",
                            interfaceNumber,
@@ -498,12 +541,14 @@
         return NO;
     }
 
-    int clearInResult = libusb_clear_halt(handle, bulkIn);
-    int clearOutResult = libusb_clear_halt(handle, bulkOut);
+    int clearInResult = self.clearsEndpointHalts ? libusb_clear_halt(handle, bulkIn) : LIBUSB_SUCCESS;
+    int clearOutResult = self.clearsEndpointHalts ? libusb_clear_halt(handle, bulkOut) : LIBUSB_SUCCESS;
     if (clearInResult != LIBUSB_SUCCESS || clearOutResult != LIBUSB_SUCCESS) {
         libusb_release_interface(handle, interfaceNumber);
         libusb_close(handle);
-        libusb_exit(context);
+        if (!self.usesSharedLibUSBContext) {
+            libusb_exit(context);
+        }
         [self assignError:error
                   message:[NSString stringWithFormat:@"endpoint cleanup failed: IN %s (%d), OUT %s (%d).",
                            libusb_error_name(clearInResult),
