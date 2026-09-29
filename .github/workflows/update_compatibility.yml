@@ -1,0 +1,40 @@
+name: Auto-Update Compatibility Table
+
+on:
+  issues:
+    types: [opened, labeled]
+
+jobs:
+  update-readme:
+    if: contains(github.event.issue.labels.*.name, 'scanner-report')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Parse Issue and Update README
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+        run: python .github/scripts/update_readme.py
+
+      - name: Commit & Push Changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --quiet && git diff --staged --quiet || (git commit -m "docs: auto-add scanner report from issue #${{ github.event.issue.number }}" && git push)
+
+      - name: Close and Comment on Issue
+        uses: peter-evans/close-issue@v3
+        with:
+          issue-number: ${{ github.event.issue.number }}
+          comment: "Thank you for your report! Your scanner model has been automatically added to the compatibility table in `README.md`."
