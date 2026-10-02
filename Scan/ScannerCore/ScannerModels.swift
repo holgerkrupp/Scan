@@ -180,14 +180,14 @@ struct ScannerCapabilities: Equatable, Sendable, Codable {
     /// advertising a union that may fail after the user has selected a source.
     let resolutionsBySource: [ScanSource: [Int]]
     let scanArea: ScanArea?
-    let supportsBlankPageRemoval: Bool; let supportsDeskew: Bool; let supportsAutoCrop: Bool; let supportsAutoRotate: Bool; let supportsDuplex: Bool
+    let supportsDuplex: Bool
     /// The scanner can read ahead from the ADF into internal memory (Fujitsu "buffer mode").
     let supportsScannerBuffering: Bool
     /// The scanner can deliver pages as JPEG (Fujitsu window compression 0x81).
     let supportsHardwareCompression: Bool
     let unsupportedReason: String?
-    init(sources: [ScanSource], colorModes: [ScanColorMode], resolutionsDPI: [Int], resolutionsBySource: [ScanSource: [Int]] = [:], outputFormats: [ScanOutputFormat] = ScanOutputFormat.allCases, scanArea: ScanArea? = nil, supportsBlankPageRemoval: Bool, supportsDeskew: Bool, supportsAutoCrop: Bool, supportsAutoRotate: Bool = true, supportsDuplex: Bool, supportsScannerBuffering: Bool = false, supportsHardwareCompression: Bool = false, unsupportedReason: String? = nil) {
-        self.sources = sources; self.colorModes = colorModes; self.resolutionsDPI = resolutionsDPI; self.resolutionsBySource = resolutionsBySource; self.outputFormats = outputFormats; self.scanArea = scanArea; self.supportsBlankPageRemoval = supportsBlankPageRemoval; self.supportsDeskew = supportsDeskew; self.supportsAutoCrop = supportsAutoCrop; self.supportsAutoRotate = supportsAutoRotate; self.supportsDuplex = supportsDuplex; self.supportsScannerBuffering = supportsScannerBuffering; self.supportsHardwareCompression = supportsHardwareCompression; self.unsupportedReason = unsupportedReason
+    init(sources: [ScanSource], colorModes: [ScanColorMode], resolutionsDPI: [Int], resolutionsBySource: [ScanSource: [Int]] = [:], outputFormats: [ScanOutputFormat] = ScanOutputFormat.allCases, scanArea: ScanArea? = nil, supportsDuplex: Bool, supportsScannerBuffering: Bool = false, supportsHardwareCompression: Bool = false, unsupportedReason: String? = nil) {
+        self.sources = sources; self.colorModes = colorModes; self.resolutionsDPI = resolutionsDPI; self.resolutionsBySource = resolutionsBySource; self.outputFormats = outputFormats; self.scanArea = scanArea; self.supportsDuplex = supportsDuplex; self.supportsScannerBuffering = supportsScannerBuffering; self.supportsHardwareCompression = supportsHardwareCompression; self.unsupportedReason = unsupportedReason
     }
     func resolutions(for source: ScanSource) -> [Int] { resolutionsBySource[source] ?? resolutionsDPI }
     func validate(_ options: ScanOptions) throws {
@@ -198,10 +198,6 @@ struct ScannerCapabilities: Equatable, Sendable, Codable {
         if options.acquisition.source == .adfDuplex && !supportsDuplex { throw ScannerError.unsupportedOption("Duplex scanning is not supported.") }
         if options.acquisition.scannerBuffering && !supportsScannerBuffering { throw ScannerError.unsupportedOption("Scanner buffering is not available for this scanner.") }
         if options.acquisition.hardwareCompression && !supportsHardwareCompression { throw ScannerError.unsupportedOption("Hardware JPEG compression is not available for this scanner.") }
-        if options.processing.removeBlankPages && !supportsBlankPageRemoval { throw ScannerError.unsupportedOption("Blank-page removal is not available for this scanner.") }
-        if options.processing.deskew && !supportsDeskew { throw ScannerError.unsupportedOption("Deskew is not available for this scanner.") }
-        if options.processing.autoCrop && !supportsAutoCrop { throw ScannerError.unsupportedOption("Auto-crop is not available for this scanner.") }
-        if options.processing.autoRotate && !supportsAutoRotate { throw ScannerError.unsupportedOption("Automatic orientation is not available for this scanner.") }
     }
 }
 

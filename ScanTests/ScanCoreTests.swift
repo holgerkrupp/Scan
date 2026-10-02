@@ -15,7 +15,7 @@ final class ScanCoreTests: XCTestCase {
     }
 
     func testCapabilityFilteringRejectsUnsupportedOptions() {
-        let capabilities = ScannerCapabilities(sources: [.adfFront], colorModes: [.gray], resolutionsDPI: [200], outputFormats: [.png], supportsBlankPageRemoval: false, supportsDeskew: false, supportsAutoCrop: false, supportsAutoRotate: false, supportsDuplex: false)
+        let capabilities = ScannerCapabilities(sources: [.adfFront], colorModes: [.gray], resolutionsDPI: [200], outputFormats: [.png], supportsDuplex: false)
         var options = ScanOptions(acquisition: AcquisitionSettings(source: .adfDuplex, colorMode: .color, resolutionDPI: 300))
         XCTAssertThrowsError(try capabilities.validate(options))
         options.acquisition = AcquisitionSettings(source: .adfFront, colorMode: .gray, resolutionDPI: 200); options.export.outputFormat = .pdf
@@ -28,9 +28,6 @@ final class ScanCoreTests: XCTestCase {
             colorModes: [.color],
             resolutionsDPI: [150, 300, 600],
             resolutionsBySource: [.flatbed: [150, 300, 600], .adfFront: [150, 300]],
-            supportsBlankPageRemoval: true,
-            supportsDeskew: true,
-            supportsAutoCrop: true,
             supportsDuplex: false
         )
         var options = ScanOptions(acquisition: AcquisitionSettings(source: .flatbed, colorMode: .color, resolutionDPI: 600))
@@ -484,7 +481,7 @@ private final class ButtonMonitoringDriver: ScannerDriver {
 
 private final class ButtonMonitoringDevice: ScannerDevice, ScannerHardwareEventSource {
     let identity: ScannerIdentity
-    let capabilities = ScannerCapabilities(sources: ScanSource.allCases, colorModes: ScanColorMode.allCases, resolutionsDPI: [150, 300, 600], supportsBlankPageRemoval: true, supportsDeskew: true, supportsAutoCrop: true, supportsDuplex: true)
+    let capabilities = ScannerCapabilities(sources: ScanSource.allCases, colorModes: ScanColorMode.allCases, resolutionsDPI: [150, 300, 600], supportsDuplex: true)
     let status: ScannerStatus = .idle
     let hardwareEventCapabilities = ScannerHardwareEventCapabilities(scanButton: .supportedValidated, supportsOneTouchScanning: true, detail: "Test scanner")
     private let driver: ButtonMonitoringDriver

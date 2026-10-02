@@ -242,16 +242,16 @@ struct ContentView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                capabilityToggle("Remove blank pages", value: profile(\.options.processing.removeBlankPages), supported: viewModel.capabilities?.supportsBlankPageRemoval ?? false, reason: "The selected backend does not expose blank-page processing.")
+                Toggle("Remove blank pages", isOn: profile(\.options.processing.removeBlankPages))
                 VStack(alignment: .leading, spacing: 4) {
-                    capabilityToggle("Deskew and crop to page", value: profile(\.options.processing.deskew), supported: viewModel.capabilities?.supportsDeskew ?? false, reason: "Software deskew is unavailable for this backend.")
+                    Toggle("Deskew and crop to page", isOn: profile(\.options.processing.deskew))
                     Text("Straightens skewed sheets and crops away the paper edges, like ScanSnap Home. Also available as Edit > Auto-Align Page.").font(.caption).foregroundStyle(.secondary)
                 }
                 VStack(alignment: .leading, spacing: 4) {
-                    capabilityToggle("Crop to content", value: profile(\.options.processing.autoCrop), supported: viewModel.capabilities?.supportsAutoCrop ?? false, reason: "Software crop is unavailable for this backend.")
+                    Toggle("Crop to content", isOn: profile(\.options.processing.autoCrop))
                     Text("Trims the paper margins down to the printed content, for receipts and clippings.").font(.caption).foregroundStyle(.secondary)
                 }
-                capabilityToggle("Automatic orientation", value: profile(\.options.processing.autoRotate), supported: viewModel.capabilities?.supportsAutoRotate ?? false, reason: "Automatic orientation is unavailable for this backend.")
+                Toggle("Automatic orientation", isOn: profile(\.options.processing.autoRotate))
             }
             Section("Diagnostics") {
                 if viewModel.selectedScannerUsesEpjitsuProtocol, let profile = viewModel.selectedEpjitsuProfile {

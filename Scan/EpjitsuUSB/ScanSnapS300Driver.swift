@@ -103,10 +103,6 @@ struct EpjitsuScanSnapModelProfile: Equatable, Sendable {
             colorModes: [.color],
             resolutionsDPI: [150, 200, 300, 600],
             scanArea: .init(width: 8.5, height: 11.5, unit: "inches"),
-            supportsBlankPageRemoval: false,
-            supportsDeskew: false,
-            supportsAutoCrop: false,
-            supportsAutoRotate: false,
             supportsDuplex: supportsDuplex,
             unsupportedReason: "Experimental direct-USB acquisition: color ADF scanning is implemented; grayscale, line-art, and hardware-button one-touch behavior remain unavailable or unvalidated."
         )
