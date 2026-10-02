@@ -846,10 +846,6 @@ final class ScannerWorkspaceViewModel {
         let sourceResolutions = capabilities.resolutions(for: profile.options.source)
         if !sourceResolutions.contains(profile.options.resolutionDPI), let nearest = sourceResolutions.min(by: { abs($0 - profile.options.resolutionDPI) < abs($1 - profile.options.resolutionDPI) }) { profile.options.resolutionDPI = nearest }
         if !capabilities.outputFormats.contains(profile.options.outputFormat), let first = capabilities.outputFormats.first { profile.options.outputFormat = first }
-        if !capabilities.supportsBlankPageRemoval { profile.options.removeBlankPages = false }
-        if !capabilities.supportsDeskew { profile.options.deskew = false }
-        if !capabilities.supportsAutoCrop { profile.options.autoCrop = false }
-        if !capabilities.supportsAutoRotate { profile.options.autoRotate = false }
         if !capabilities.supportsScannerBuffering { profile.options.acquisition.scannerBuffering = false }
         if !capabilities.supportsHardwareCompression { profile.options.acquisition.hardwareCompression = false }
         if profile != selectedProfile { updateProfile(profile) }

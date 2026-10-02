@@ -161,7 +161,7 @@ final class ImageCaptureScannerDevice: NSObject, ScannerDevice, ScannerHardwareE
         self.identity = identity
         // Concrete capabilities are available only after opening the device and
         // selecting each of its functional units.
-        capabilities = ScannerCapabilities(sources: [], colorModes: ScanColorMode.allCases, resolutionsDPI: [], supportsBlankPageRemoval: true, supportsDeskew: true, supportsAutoCrop: true, supportsAutoRotate: true, supportsDuplex: false)
+        capabilities = ScannerCapabilities(sources: [], colorModes: ScanColorMode.allCases, resolutionsDPI: [], supportsDuplex: false)
     }
 
     func open() async throws {
@@ -313,7 +313,7 @@ final class ImageCaptureScannerDevice: NSObject, ScannerDevice, ScannerHardwareE
         }
         if available.contains(originalType) { _ = try await select(originalType, scanner: scanner) }
 
-        capabilities = ScannerCapabilities(sources: sources, colorModes: ScanColorMode.allCases, resolutionsDPI: Array(Set(resolutionsBySource.values.flatMap { $0 })).sorted(), resolutionsBySource: resolutionsBySource, scanArea: area, supportsBlankPageRemoval: true, supportsDeskew: true, supportsAutoCrop: true, supportsAutoRotate: true, supportsDuplex: sources.contains(.adfDuplex))
+        capabilities = ScannerCapabilities(sources: sources, colorModes: ScanColorMode.allCases, resolutionsDPI: Array(Set(resolutionsBySource.values.flatMap { $0 })).sorted(), resolutionsBySource: resolutionsBySource, scanArea: area, supportsDuplex: sources.contains(.adfDuplex))
     }
 
     private func select(functionalUnitFor source: ScanSource, scanner: ICScannerDevice) async throws -> ICScannerFunctionalUnit {
