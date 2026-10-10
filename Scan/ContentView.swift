@@ -4,6 +4,8 @@ import SwiftUI
 struct ContentView: View {
     @State private var viewModel = ScannerWorkspaceViewModel.shared
     @State private var showingDocumentation = false
+    /// Scanner whose details sheet is open; set by double-clicking it in the sidebar.
+    @State private var scannerDetails: ScannerDetails?
     /// Thumbnail width chosen with the slider next to "Reveal in Finder".
     @AppStorage("scan.thumbnailSize") private var thumbnailSize = 170.0
     @State private var gridWidth = 0.0
@@ -25,6 +27,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showingDocumentation) {
             ScanDocumentationView()
+        }
+        .sheet(item: $scannerDetails) { details in
+            ScannerDetailsView(details: details)
         }
         // Must fit the widest sidebar (380) plus preview (420) and inspector (370); otherwise the split view overflows and is centred, clipping the sidebar.
         .frame(minWidth: 1180, minHeight: 760)
@@ -58,7 +63,16 @@ struct ContentView: View {
                             .foregroundStyle(capabilities == nil ? .orange : .secondary)
                     }.tag(identity)
                 }
-            }.listStyle(.sidebar)
+            }
+            .listStyle(.sidebar)
+            // A double-click (the list's primary action) opens the scanner's details.
+            .contextMenu(forSelectionType: ScannerIdentity.self) { identities in
+                if let identity = identities.first {
+                    Button("Show Details…") { scannerDetails = viewModel.details(for: identity) }
+                }
+            } primaryAction: { identities in
+                if let identity = identities.first { scannerDetails = viewModel.details(for: identity) }
+            }
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -204,6 +218,30 @@ struct ContentView: View {
                 capabilityToggle("Scanner buffering", value: profile(\.options.acquisition.scannerBuffering), supported: viewModel.capabilities?.supportsScannerBuffering ?? false, reason: "This scanner does not expose ADF read-ahead buffering.")
                 capabilityToggle("Hardware JPEG compression", value: profile(\.options.acquisition.hardwareCompression), supported: viewModel.capabilities?.supportsHardwareCompression ?? false, reason: "This scanner cannot compress pages itself.")
             }
+            Section("Destination") {
+                LabeledContent("Save to") {
+                    Text(viewModel.destinationFolder.lastPathComponent).lineLimit(1).truncationMode(.middle)
+                }
+                .help(viewModel.destinationFolder.path)
+                Text(viewModel.destinationFolder.path).font(.caption).foregroundStyle(.secondary).lineLimit(2).truncationMode(.middle).textSelection(.enabled)
+                HStack {
+                    Button { viewModel.chooseDestination() } label: { Label("Choose…", systemImage: "folder.badge.gearshape") }
+                    Button { viewModel.openDestinationFolder() } label: { Label("Show", systemImage: "folder") }
+                    Spacer()
+                    Button("Reset") { viewModel.resetDestination() }
+                        .disabled(viewModel.destinationFolder.standardizedFileURL == DestinationFolderStore.defaultFolder.standardizedFileURL)
+                        .help("Use the default folder \(DestinationFolderStore.defaultFolder.path)")
+                }
+            }
+            Section("Language / OCR") {
+                Picker("OCR language", selection: $viewModel.ocrSettings.language) {
+                    ForEach(OCRLanguage.allCases) { Text($0.displayName).tag($0) }
+                }
+                Toggle("Run OCR (ocrmypdf) after scanning", isOn: $viewModel.ocrSettings.runOCRmyPDF)
+                if viewModel.isRunningOCR { HStack { ProgressView().controlSize(.small); Text("Running ocrmypdf…").font(.caption).foregroundStyle(.secondary) } }
+                else if viewModel.ocrSettings.runOCRmyPDF && OCRmyPDFRunner.locate() == nil { Text("ocrmypdf was not found. Install it with \"brew install ocrmypdf\".").font(.caption).foregroundStyle(.orange) }
+                else { Text("Same setting as Settings ▸ Language. Applies to every exported PDF.").font(.caption).foregroundStyle(.secondary) }
+            }
             Section("Image") {
                 Picker("Output", selection: profile(\.options.export.outputFormat)) { ForEach(ScanOutputFormat.allCases) { Text($0.rawValue).tag($0).disabled(!viewModel.isSupported($0)) } }
                 Picker("File size", selection: profile(\.options.export.sizePreset)) { ForEach(ScanFileSizePreset.allCases) { Text($0.rawValue).tag($0) } }.onChange(of: viewModel.selectedProfile.options.export.sizePreset) { _, preset in var p = viewModel.selectedProfile; p.options.applyPreset(preset); viewModel.updateProfile(p) }
@@ -217,7 +255,11 @@ struct ContentView: View {
                         }
                     }
                 }
-                TextField("Filename template", text: profileString(\.options.export.filenameTemplate)); Text("Tokens: {date}, {time}, {page}, {side}").font(.caption).foregroundStyle(.secondary)
+                TextField("Filename template", text: profileString(\.options.export.filenameTemplate)); Text("Tokens: {date}, {time}, {name}, {page}, {side}").font(.caption).foregroundStyle(.secondary)
+                if viewModel.selectedProfile.options.export.filenameTemplate.contains("{name}") {
+                    if let reason = FoundationModelNameSuggester.unavailableReason { Text("\(reason) {name} becomes \"\(DocumentName.fallback)\".").font(.caption).foregroundStyle(.orange) }
+                    else { Text("{name} is proposed on this Mac by Apple Intelligence from the text of the first pages.").font(.caption).foregroundStyle(.secondary) }
+                }
                 Toggle("Automatically save after scanning", isOn: profile(\.options.export.automaticallySaveAfterScanning))
             }
             Section("Processing") {

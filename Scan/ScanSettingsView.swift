@@ -33,6 +33,16 @@ struct ScanSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Language") {
+                Picker("Default OCR language", selection: $viewModel.ocrSettings.language) {
+                    ForEach(OCRLanguage.allCases) { Text($0.displayName).tag($0) }
+                }
+                Toggle("Run OCR (ocrmypdf) after scanning", isOn: $viewModel.ocrSettings.runOCRmyPDF)
+                Text(ocrmypdfStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Hardware Button / One-Touch Scan") {
                 Toggle("Use physical Scan button", isOn: Binding(
                     get: { viewModel.hardwareButtonEnabled },
@@ -103,6 +113,14 @@ struct ScanSettingsView: View {
         .formStyle(.grouped)
         .padding()
         .frame(width: 620)
+    }
+}
+
+extension ScanSettingsView {
+    private var ocrmypdfStatus: String {
+        guard viewModel.ocrSettings.runOCRmyPDF else { return "Exported PDFs are saved without an ocrmypdf text layer." }
+        guard let runner = OCRmyPDFRunner.locate() else { return "ocrmypdf was not found. Install it with \"brew install ocrmypdf\"." }
+        return "Every exported PDF is passed to \(runner.executableURL.path) with language \(viewModel.ocrSettings.language.tesseractCode)."
     }
 }
 

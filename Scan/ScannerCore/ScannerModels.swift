@@ -140,7 +140,10 @@ struct ExportSettings: Hashable, Sendable, Codable {
     var outputDPI: Int = 200
     var jpegQuality: Double = 0.82
     var exportMode: ScanExportMode = .combinedPDF
-    var filenameTemplate = "Scan-{date}-{page}"
+    /// `{name}` is proposed from the document's text by the on-device model.
+    var filenameTemplate = ExportSettings.defaultFilenameTemplate
+    static let defaultFilenameTemplate = "{date}-{time}-{name}"
+    static let previousDefaultFilenameTemplate = "Scan-{date}-{page}"
     var ocrLanguages: [String] = ["en-US"]
     var automaticallySaveAfterScanning = true
 }
@@ -223,7 +226,16 @@ enum ScannerError: LocalizedError, Equatable {
 struct ScanProfileStore {
     private let defaults: UserDefaults; private let key = "scan.profiles.v2"; private let selectedKey = "scan.selectedProfile"
     init(defaults: UserDefaults) { self.defaults = defaults }
-    func load() -> [ScanProfile] { guard let data = defaults.data(forKey: key), let profiles = try? JSONDecoder().decode([ScanProfile].self, from: data), !profiles.isEmpty else { return ScanProfile.defaults }; return profiles }
+    func load() -> [ScanProfile] { guard let data = defaults.data(forKey: key), let profiles = try? JSONDecoder().decode([ScanProfile].self, from: data), !profiles.isEmpty else { return ScanProfile.defaults }; return migratingFilenameTemplates(profiles) }
+    /// Once per installation, saved profiles still on the previous default
+    /// template move to the current one; templates the user wrote are kept.
+    private func migratingFilenameTemplates(_ profiles: [ScanProfile]) -> [ScanProfile] {
+        let migratedKey = "scan.profiles.filenameTemplateWithName"
+        guard !defaults.bool(forKey: migratedKey) else { return profiles }
+        let migrated = profiles.map { profile in var profile = profile; if profile.options.export.filenameTemplate == ExportSettings.previousDefaultFilenameTemplate { profile.options.export.filenameTemplate = ExportSettings.defaultFilenameTemplate }; return profile }
+        save(migrated); defaults.set(true, forKey: migratedKey)
+        return migrated
+    }
     func save(_ profiles: [ScanProfile]) { if let data = try? JSONEncoder().encode(profiles) { defaults.set(data, forKey: key) } }
     var selectedProfileID: UUID? { get { defaults.string(forKey: selectedKey).flatMap(UUID.init(uuidString:)) } set { defaults.set(newValue?.uuidString, forKey: selectedKey) } }
 }
@@ -274,5 +286,43 @@ struct HardwareButtonSettingsStore {
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
         settings.perScannerDestinationBookmarks[identity.id] = try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
         save(settings)
+    }
+}
+
+/// Persists the default saving location across launches as a security-scoped
+/// bookmark, so the sandboxed app keeps write access to a folder the user
+/// chose. The plain path is kept too, for display and diagnostics.
+struct DestinationFolderStore {
+    private let defaults: UserDefaults
+    private let bookmarkKey = "scan.destinationBookmark"
+    private let pathKey = "scan.destinationPath"
+
+    init(defaults: UserDefaults) { self.defaults = defaults }
+
+    static var defaultFolder: URL { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Scans", isDirectory: true) }
+
+    var savedPath: String? { defaults.string(forKey: pathKey) }
+
+    /// Saves `url`; throws when no bookmark can be created, so callers can
+    /// report that the choice will not survive a relaunch.
+    func save(_ url: URL) throws {
+        let data = try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+        defaults.set(data, forKey: bookmarkKey)
+        defaults.set(url.path, forKey: pathKey)
+    }
+
+    /// The saved folder with its security scope started, refreshing a stale bookmark.
+    func restore() -> URL? {
+        guard let data = defaults.data(forKey: bookmarkKey) else { return nil }
+        var stale = false
+        guard let url = try? URL(resolvingBookmarkData: data, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale) else { return nil }
+        _ = url.startAccessingSecurityScopedResource()
+        if stale { try? save(url) }
+        return url
+    }
+
+    func reset() {
+        defaults.removeObject(forKey: bookmarkKey)
+        defaults.removeObject(forKey: pathKey)
     }
 }

@@ -4,20 +4,26 @@ import Foundation
 @preconcurrency import Vision
 
 final class ScanOutputWriter {
-    func write(frames: [PageFrame], options: ScanOptions, destinationFolder: URL) async throws -> ScanJobResult {
+    /// Fills the `{name}` token of the filename template; nil leaves it at the fallback.
+    private let nameSuggester: DocumentNameSuggesting?
+
+    init(nameSuggester: DocumentNameSuggesting? = FoundationModelNameSuggester()) { self.nameSuggester = nameSuggester }
+
+    func write(frames: [PageFrame], options: ScanOptions, destinationFolder: URL, ocrLanguage: OCRLanguage = .german) async throws -> ScanJobResult {
         let processed = try frames.compactMap { try ScanImageProcessor.process($0, settings: options.processing, outputDPI: options.export.outputDPI) }
-        return try await writeProcessed(processed, options: options, destinationFolder: destinationFolder)
+        return try await writeProcessed(processed, options: options, destinationFolder: destinationFolder, ocrLanguage: ocrLanguage)
     }
 
     /// File-backed pages are read one at a time, so large feeder batches do not
     /// stay resident. This is the workspace's path: the pages are already
     /// processed renditions, so only the output resolution and compression are
     /// applied here and the export matches what the grid shows.
-    func write(pages: [StoredPage], options: ScanOptions, destinationFolder: URL) async throws -> ScanJobResult {
+    func write(pages: [StoredPage], options: ScanOptions, destinationFolder: URL, ocrLanguage: OCRLanguage = .german) async throws -> ScanJobResult {
         try FileManager.default.createDirectory(at: destinationFolder, withIntermediateDirectories: true)
         let date = Self.dateFormatter.string(from: Date())
+        let documentName = await suggestedName(for: options.export.filenameTemplate, language: ocrLanguage, frames: pages.map { page in { try self.process(page, options: options) } })
         if (options.export.outputFormat == .pdf || options.export.outputFormat == .searchablePDF) && options.export.exportMode == .combinedPDF {
-            let url = uniqueURL(folder: destinationFolder, name: renderName(options.export.filenameTemplate, date: date, page: nil, side: nil), ext: "pdf")
+            let url = uniqueURL(folder: destinationFolder, name: renderName(options.export.filenameTemplate, date: date, name: documentName, page: nil, side: nil), ext: "pdf")
             guard let consumer = CGDataConsumer(url: url as CFURL), let context = CGContext(consumer: consumer, mediaBox: nil, nil) else { throw ScannerError.outputFailed("Could not write PDF to \(url.path).") }
             var count = 0
             do {
@@ -40,7 +46,7 @@ final class ScanOutputWriter {
             guard let frame = try process(page, options: options) else { continue }
             let ext: String
             switch options.export.outputFormat { case .pdf, .searchablePDF: ext = "pdf"; case .jpeg: ext = "jpg"; case .png: ext = "png"; case .tiff: ext = "tiff" }
-            let url = uniqueURL(folder: destinationFolder, name: renderName(options.export.filenameTemplate, date: date, page: count + 1, side: frame.side.rawValue), ext: ext)
+            let url = uniqueURL(folder: destinationFolder, name: renderName(options.export.filenameTemplate, date: date, name: documentName, page: count + 1, side: frame.side.rawValue), ext: ext)
             switch options.export.outputFormat {
             case .pdf, .searchablePDF: try await writePDF(frames: [frame], to: url, searchable: options.export.outputFormat == .searchablePDF, options: options)
             case .jpeg: try encode(frame: frame, to: url, type: .jpeg, quality: options.export.jpegQuality)
@@ -67,12 +73,13 @@ final class ScanOutputWriter {
         return image
     }
 
-    private func writeProcessed(_ frames: [PageFrame], options: ScanOptions, destinationFolder: URL) async throws -> ScanJobResult {
+    private func writeProcessed(_ frames: [PageFrame], options: ScanOptions, destinationFolder: URL, ocrLanguage: OCRLanguage) async throws -> ScanJobResult {
         guard !frames.isEmpty else { throw ScannerError.outputFailed("No non-blank pages were received from the scanner.") }
         try FileManager.default.createDirectory(at: destinationFolder, withIntermediateDirectories: true)
         let date = Self.dateFormatter.string(from: Date())
+        let documentName = await suggestedName(for: options.export.filenameTemplate, language: ocrLanguage, frames: frames.map { frame in { frame } })
         if (options.export.outputFormat == .pdf || options.export.outputFormat == .searchablePDF) && options.export.exportMode == .combinedPDF {
-            let url = uniqueURL(folder: destinationFolder, name: renderName(options.export.filenameTemplate, date: date, page: nil, side: nil), ext: "pdf")
+            let url = uniqueURL(folder: destinationFolder, name: renderName(options.export.filenameTemplate, date: date, name: documentName, page: nil, side: nil), ext: "pdf")
             try await writePDF(frames: frames, to: url, searchable: options.export.outputFormat == .searchablePDF, options: options)
             return ScanJobResult(outputURLs: [url], pagesScanned: frames.count, outputByteCount: fileSize(url))
         }
@@ -81,7 +88,7 @@ final class ScanOutputWriter {
         for (index, frame) in frames.enumerated() {
             let ext: String
             switch options.export.outputFormat { case .pdf, .searchablePDF: ext = "pdf"; case .jpeg: ext = "jpg"; case .png: ext = "png"; case .tiff: ext = "tiff" }
-            let name = renderName(options.export.filenameTemplate, date: date, page: index + 1, side: frame.side.rawValue)
+            let name = renderName(options.export.filenameTemplate, date: date, name: documentName, page: index + 1, side: frame.side.rawValue)
             let url = uniqueURL(folder: destinationFolder, name: name, ext: ext)
             switch options.export.outputFormat {
             case .pdf, .searchablePDF: try await writePDF(frames: [frame], to: url, searchable: options.export.outputFormat == .searchablePDF, options: options)
@@ -148,15 +155,29 @@ final class ScanOutputWriter {
         context.restoreGState()
     }
 
-    private func renderName(_ template: String, date: String, page: Int?, side: String?) -> String {
-        let value = template.replacingOccurrences(of: "{date}", with: date).replacingOccurrences(of: "{time}", with: Self.timeFormatter.string(from: Date())).replacingOccurrences(of: "{page}", with: page.map { String(format: "%03d", $0) } ?? "batch").replacingOccurrences(of: "{side}", with: side ?? "all")
+    /// One name for the whole batch, proposed from the text Vision reads on
+    /// the first pages. Only runs when the template asks for `{name}`; any
+    /// failure yields nil so the export itself is never held up.
+    private func suggestedName(for template: String, language: OCRLanguage, frames: [() throws -> PageFrame?]) async -> String? {
+        guard template.contains("{name}"), let nameSuggester else { return nil }
+        var text = ""
+        for frame in frames.prefix(3) {
+            guard let frame = try? frame(), let image = try? decode(frame), let lines = try? await recognizeText(in: image, languages: [language.visionCode]) else { continue }
+            text += lines.map(\.text).joined(separator: "\n") + "\n"
+            if text.count >= 400 { break }
+        }
+        return await nameSuggester.suggestName(forText: text)
+    }
+
+    private func renderName(_ template: String, date: String, name: String?, page: Int?, side: String?) -> String {
+        let value = template.replacingOccurrences(of: "{date}", with: date).replacingOccurrences(of: "{name}", with: name ?? DocumentName.fallback).replacingOccurrences(of: "{time}", with: Self.timeFormatter.string(from: Date())).replacingOccurrences(of: "{page}", with: page.map { String(format: "%03d", $0) } ?? "batch").replacingOccurrences(of: "{side}", with: side ?? "all")
         let safe = value.components(separatedBy: CharacterSet(charactersIn: "/:\\?%*|\"<>\n\r")).joined(separator: "-").trimmingCharacters(in: .whitespacesAndNewlines)
         return safe.isEmpty ? "Scan" : safe
     }
     private func uniqueURL(folder: URL, name: String, ext: String) -> URL { var url = folder.appendingPathComponent("\(name).\(ext)"); var counter = 2; while FileManager.default.fileExists(atPath: url.path) { url = folder.appendingPathComponent("\(name)-\(counter).\(ext)"); counter += 1 }; return url }
     private func fileSize(_ url: URL) -> Int64 { (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0 }
-    private static let dateFormatter: DateFormatter = { let f = DateFormatter(); f.dateFormat = "yyyyMMdd"; return f }()
-    private static let timeFormatter: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HHmmss"; return f }()
+    private static let dateFormatter: DateFormatter = { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f }()
+    private static let timeFormatter: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HH-mm-ss"; return f }()
 }
 
 private struct RecognizedTextLine: Sendable { let text: String; let normalizedBounds: CGRect }
