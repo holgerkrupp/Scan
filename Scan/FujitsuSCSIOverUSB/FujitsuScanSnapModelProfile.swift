@@ -107,9 +107,6 @@ struct FujitsuScanSnapModelProfile: Sendable {
             sources: [.adfFront, .adfBack, .adfDuplex],
             colorModes: [.color, .gray, .lineart],
             resolutionsDPI: [150, 200, 300, 400, 600],
-            supportsBlankPageRemoval: true,
-            supportsDeskew: true,
-            supportsAutoCrop: true,
             supportsDuplex: true
         ),
         sendsDiagnosticPreread: false,
@@ -184,9 +181,6 @@ struct FujitsuScanSnapModelProfile: Sendable {
             sources: [.adfFront, .adfBack, .adfDuplex],
             colorModes: [.color, .gray, .lineart],
             resolutionsDPI: resolutionsDPI,
-            supportsBlankPageRemoval: true,
-            supportsDeskew: true,
-            supportsAutoCrop: true,
             supportsDuplex: true
         )
     }
@@ -206,9 +200,6 @@ struct FujitsuScanSnapModelProfile: Sendable {
             colorModes: [.color, .gray, .lineart],
             // 150/300/600 validated on hardware; 400 dpi is not advertised.
             resolutionsDPI: [150, 200, 300, 600],
-            supportsBlankPageRemoval: true,
-            supportsDeskew: true,
-            supportsAutoCrop: true,
             supportsDuplex: true,
             supportsScannerBuffering: true,
             supportsHardwareCompression: true
@@ -277,9 +268,6 @@ struct FujitsuScanSnapModelProfile: Sendable {
                 sources: [.adfFront, .adfBack, .adfDuplex],
                 colorModes: [.color, .gray, .lineart],
                 resolutionsDPI: [150, 200, 300, 400, 600],
-                supportsBlankPageRemoval: true,
-                supportsDeskew: true,
-                supportsAutoCrop: true,
                 supportsDuplex: true,
                 supportsScannerBuffering: true,
                 supportsHardwareCompression: true

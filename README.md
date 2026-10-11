@@ -7,9 +7,7 @@ iX1300, iX1400, iX1500, and iX1600.
 Help us expand support! [Click here to submit your scanner report](https://github.com/holgerkrupp/Scan/issues/new?template=scanner_report.yml).
 | Brand & Model | Scanner Status | Hardware Button | Notes |
 | :--- | :--- | :--- | :--- |
-<!-- SCANNERS_START -->
-| Fujitsu ScanSnap S1500M | 🟢 Working | 🟢 Working |  |
-<!-- SCANNERS_END -->
+| Fujitsu ScanSnap S1500M | 🟢 Working | 🟢 Working | |
 
 ## Building
 
@@ -55,6 +53,8 @@ capabilities, hardware-button support and the USB registry properties, read
 without opening the device. **Copy Details** puts them on the clipboard for a
 bug report. The sheet shows a photo of the model: a freely licensed one for
 the S1500 and iX500 (credited in the sheet), or one you drop in or choose.
+Scan requires the libusb library. If necessary, this can be installed via 
+Homebrew using the Terminal command `brew install libusb`.
 
 ## Shortcuts and automation
 
