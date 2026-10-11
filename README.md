@@ -17,6 +17,9 @@ Apple Developer team, copy `Config/Local.xcconfig.example` to
 Leave the team in Xcode's Signing & Capabilities pane untouched: choosing one
 there writes it into the project file, which overrides the configuration files.
 
+Scan requires the libusb library. If necessary, this can be installed via 
+Homebrew using the Terminal command `brew install libusb`.
+
 ## Shortcuts and automation
 
 Scan publishes three App Intents to Shortcuts and Siri: **Scan Document**,
