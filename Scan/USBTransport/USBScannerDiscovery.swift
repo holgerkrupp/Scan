@@ -108,6 +108,45 @@ struct USBDeviceEnumerator {
         return identities.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
+    /// Scalar IORegistry properties (strings, numbers, booleans) of the USB
+    /// device matching `identity`, rendered as text for the details dialog.
+    /// Reading the registry never opens the device.
+    func registryProperties(for identity: ScannerIdentity) -> [String: String] {
+        guard let usbDeviceID = identity.usbDeviceID else { return [:] }
+        var iterator: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, IOServiceMatching(kIOUSBDeviceClassName), &iterator) == KERN_SUCCESS else { return [:] }
+        defer { IOObjectRelease(iterator) }
+
+        while case let service = IOIteratorNext(iterator), service != 0 {
+            defer { IOObjectRelease(service) }
+            guard readUInt16Property("idVendor", from: service) == usbDeviceID.vendorID,
+                  readUInt16Property("idProduct", from: service) == usbDeviceID.productID,
+                  identity.locationID == nil || readUInt32Property("locationID", from: service) == identity.locationID
+            else { continue }
+            var unmanaged: Unmanaged<CFMutableDictionary>?
+            guard IORegistryEntryCreateCFProperties(service, &unmanaged, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+                  let properties = unmanaged?.takeRetainedValue() as? [String: Any]
+            else { return [:] }
+            return Self.renderScalarProperties(properties)
+        }
+        return [:]
+    }
+
+    static func renderScalarProperties(_ properties: [String: Any]) -> [String: String] {
+        var rendered: [String: String] = [:]
+        for (key, value) in properties {
+            switch value {
+            case let string as String: rendered[key] = string
+            case let number as NSNumber:
+                if CFGetTypeID(number) == CFBooleanGetTypeID() { rendered[key] = number.boolValue ? "Yes" : "No" }
+                else if CFNumberIsFloatType(number) { rendered[key] = number.stringValue }
+                else { rendered[key] = "\(number.int64Value) (0x\(String(number.int64Value, radix: 16)))" }
+            default: continue
+            }
+        }
+        return rendered
+    }
+
     private func readUInt16Property(_ key: String, from service: io_service_t) -> UInt16? {
         readNumberProperty(key, from: service).map { UInt16(truncatingIfNeeded: $0.uint32Value) }
     }

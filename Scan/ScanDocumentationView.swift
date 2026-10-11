@@ -115,7 +115,7 @@ struct ScanDocumentationView: View {
                 DefinitionRow(term: "JPEG, PNG, TIFF", definition: "Exports individual page images. Choose Separate per-page files for image formats; combined PDF is available for PDF output.")
                 DefinitionRow(term: "File size", definition: "Small, Balanced, High Quality, and Lossless presets set sensible DPI, color, and compression combinations. Custom exposes JPEG quality and output DPI.")
                 DefinitionRow(term: "Export", definition: "One combined PDF creates a single document. Separate per-page files writes one file for each page.")
-                DefinitionRow(term: "Filename template", definition: "Use {date}, {time}, {page}, and {side} in the name. For example, Scan-{date}-{page} creates numbered files for the current batch.")
+                DefinitionRow(term: "Filename template", definition: "Use {date} (2026-10-08), {time} (21-48-00), {name}, {page}, and {side} in the name. {name} is a short title that Apple Intelligence proposes on this Mac from the text of the first pages; without it, the name is \"Scan\". For example, {date}-{time}-{name} names a scan after its content, and Scan-{date}-{page} creates numbered files for the current batch.")
                 DefinitionRow(term: "Automatically save after scanning", definition: "Exports as soon as the batch finishes processing. Turn this off when you want to inspect every page before writing files.")
             }
         }

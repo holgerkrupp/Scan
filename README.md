@@ -17,6 +17,42 @@ Apple Developer team, copy `Config/Local.xcconfig.example` to
 Leave the team in Xcode's Signing & Capabilities pane untouched: choosing one
 there writes it into the project file, which overrides the configuration files.
 
+`scripts/install.sh` builds the Release configuration and copies `Scan.app` to
+`/Applications`. Set `INSTALL_DIR` to install somewhere else.
+
+## OCR, document names and destination
+
+**OCR with ocrmypdf.** Settings ▸ Language and the inspector's
+**Language / OCR** section choose the OCR language (German, English, French,
+Spanish, Italian, Dutch, Polish or Portuguese) and switch on **Run OCR
+(ocrmypdf) after scanning**. Every exported PDF is then passed to the
+[`ocrmypdf`](https://ocrmypdf.readthedocs.io) command-line tool
+(`brew install ocrmypdf`), which adds a Tesseract text layer. The result is
+written next to the PDF and swapped in only when ocrmypdf succeeds, so a
+failed run never damages a scan. Scan looks for the tool in
+`/opt/homebrew/bin`, `/usr/local/bin`, `/opt/local/bin` and `/usr/bin`; the
+sandboxed app reaches the package-manager folders through a read-only
+exception in `Scan.entitlements`.
+
+**Document names.** The filename template knows the token `{name}` next to
+`{date}`, `{time}`, `{page}` and `{side}`. It is a short title that Apple
+Intelligence proposes on the Mac (FoundationModels, nothing leaves the
+machine) from the text Vision reads on the first pages. Without Apple
+Intelligence the token becomes `Scan`. The default template is now
+`{date}-{time}-{name}`, with dates written as `2026-10-08` and times as
+`21-48-00`; profiles still on the previous default are moved over once, and
+templates you wrote yourself are kept.
+
+**Destination.** The inspector's **Destination** section shows the folder
+scans are saved to, with **Choose…**, **Show** and **Reset**. The choice is
+kept across launches as a security-scoped bookmark.
+
+**Scanner details.** Double-click a scanner in the sidebar (or use **Show
+Details…** in its context menu) for its identity, driver and model profile,
+capabilities, hardware-button support and the USB registry properties, read
+without opening the device. **Copy Details** puts them on the clipboard for a
+bug report. The sheet shows a photo of the model: a freely licensed one for
+the S1500 and iX500 (credited in the sheet), or one you drop in or choose.
 Scan requires the libusb library. If necessary, this can be installed via 
 Homebrew using the Terminal command `brew install libusb`.
 

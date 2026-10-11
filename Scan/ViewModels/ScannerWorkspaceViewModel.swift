@@ -263,6 +263,12 @@ final class ScannerWorkspaceViewModel {
     var profiles: [ScanProfile]
     var capabilities: ScannerCapabilities?
     var destinationFolder: URL { didSet { persistDestinationBookmark() } }
+    private let destinationStore = DestinationFolderStore(defaults: .standard)
+    /// Settings ▸ Language: default OCR language and the ocrmypdf switch.
+    var ocrSettings: OCRSettings { didSet { ocrSettingsStore.save(ocrSettings) } }
+    private let ocrSettingsStore = OCRSettingsStore(defaults: .standard)
+    /// True while ocrmypdf runs on the last export.
+    var isRunningOCR = false
     var status: ScannerStatus = .disconnected
     /// The scans as delivered, in display order. They stay for the whole
     /// review session so the processing options can be re-applied.
@@ -326,7 +332,8 @@ final class ScannerWorkspaceViewModel {
         self.profiles = loadedProfiles
         let selectedID = profileStore.selectedProfileID
         self.selectedProfile = loadedProfiles.first(where: { $0.id == selectedID }) ?? loadedProfiles[0]
-        self.destinationFolder = Self.restoreDestinationBookmark() ?? FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Scans", isDirectory: true)
+        self.destinationFolder = DestinationFolderStore(defaults: .standard).restore() ?? DestinationFolderStore.defaultFolder
+        self.ocrSettings = OCRSettingsStore(defaults: .standard).load()
         traceObserver = NotificationCenter.default.addObserver(forName: ScanTrace.notificationName, object: nil, queue: .main) { [weak self] note in
             guard let message = note.userInfo?[ScanTrace.messageKey] as? String else { return }
             Task { @MainActor [weak self] in self?.log(message) }
@@ -524,6 +531,10 @@ final class ScannerWorkspaceViewModel {
     }
 
     func capabilities(for identity: ScannerIdentity) -> ScannerCapabilities? { registry.capabilities(for: identity) }
+    func details(for identity: ScannerIdentity) -> ScannerDetails {
+        let usbProperties = USBDeviceEnumerator().registryProperties(for: identity)
+        return registry.details(for: identity, usbRegistryProperties: usbProperties)
+    }
 
     var selectedScannerUsesEpjitsuProtocol: Bool {
         guard let deviceID = selectedIdentity?.usbDeviceID else { return false }
@@ -643,8 +654,31 @@ final class ScannerWorkspaceViewModel {
     func saveExport(destinationOverride: URL? = nil) async {
         await waitForProcessing()
         guard !pages.isEmpty else { status = .error(rawPages.isEmpty ? "There are no pages to export." : "Every page was found blank; turn off blank-page removal to export them."); return }
-        do { let result = try await outputWriter.write(pages: pages, options: selectedProfile.options, destinationFolder: destinationOverride ?? destinationFolder); lastOutputs = result.outputURLs; lastOutputByteCount = result.outputByteCount; status = .idle; log("Exported \(result.pagesScanned) page\(result.pagesScanned == 1 ? "" : "s") (\(ByteCountFormatter.string(fromByteCount: result.outputByteCount, countStyle: .file))).") }
+        do { let result = try await outputWriter.write(pages: pages, options: selectedProfile.options, destinationFolder: destinationOverride ?? destinationFolder, ocrLanguage: ocrSettings.language); lastOutputs = result.outputURLs; lastOutputByteCount = result.outputByteCount; status = .idle; log("Exported \(result.pagesScanned) page\(result.pagesScanned == 1 ? "" : "s") (\(ByteCountFormatter.string(fromByteCount: result.outputByteCount, countStyle: .file)))."); await runOCRmyPDFIfEnabled(on: result.outputURLs) }
         catch { status = .error(error.localizedDescription); log("Export failed: \(error.localizedDescription)") }
+    }
+
+    /// Runs ocrmypdf on the exported PDFs when Settings ▸ Language enables it.
+    /// A failure keeps the exported files untouched and is reported in the status.
+    private func runOCRmyPDFIfEnabled(on outputs: [URL]) async {
+        let pdfs = outputs.filter { $0.pathExtension.lowercased() == "pdf" }
+        guard ocrSettings.runOCRmyPDF, !pdfs.isEmpty else { return }
+        guard let runner = OCRmyPDFRunner.locate() else {
+            log("ocrmypdf was not found in \(OCRmyPDFRunner.searchDirectories.joined(separator: ", ")); install it with \"brew install ocrmypdf\" or turn OCR off in Settings.")
+            return
+        }
+        let language = ocrSettings.language
+        isRunningOCR = true
+        defer { isRunningOCR = false }
+        log("Running ocrmypdf (\(language.tesseractCode)) on \(pdfs.count) PDF\(pdfs.count == 1 ? "" : "s")…")
+        do {
+            let processed = try await runner.process(pdfs, language: language)
+            lastOutputByteCount = outputs.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { Int64($0) } ?? 0) }
+            log("OCR finished for \(processed.map(\.lastPathComponent).joined(separator: ", ")).")
+        } catch {
+            status = .error(error.localizedDescription)
+            log("OCR failed: \(error.localizedDescription)")
+        }
     }
 
     func clearPages() async { resetPages(); lastOutputs = []; lastOutputByteCount = 0; await pageStore?.clear(); pageStore = nil; log("Cleared pages and output links.") }
@@ -851,7 +885,14 @@ final class ScannerWorkspaceViewModel {
         if profile != selectedProfile { updateProfile(profile) }
     }
     private func persistProfiles() { profileStore.save(profiles) }
-    private func persistDestinationBookmark() { guard let data = try? destinationFolder.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil) else { return }; UserDefaults.standard.set(data, forKey: "scan.destinationBookmark") }
-    private static func restoreDestinationBookmark() -> URL? { guard let data = UserDefaults.standard.data(forKey: "scan.destinationBookmark") else { return nil }; var stale = false; guard let url = try? URL(resolvingBookmarkData: data, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: &stale) else { return nil }; _ = url.startAccessingSecurityScopedResource(); return url }
+    private func persistDestinationBookmark() {
+        do { try destinationStore.save(destinationFolder) }
+        catch { log("Could not remember destination \(destinationFolder.path) for the next launch: \(error.localizedDescription)") }
+    }
+    func resetDestination() {
+        destinationStore.reset()
+        destinationFolder = DestinationFolderStore.defaultFolder
+        log("Destination reset to \(destinationFolder.path).")
+    }
     private func log(_ message: String) { let formatter = DateFormatter(); formatter.timeStyle = .medium; activityLog.insert("[\(formatter.string(from: Date()))] \(message)", at: 0); activityLog = Array(activityLog.prefix(100)) }
 }
