@@ -95,11 +95,7 @@ struct ScannerDetails: Sendable {
         let features: [(String, Bool)] = [
             ("Duplex", capabilities.supportsDuplex),
             ("Scanner Buffering", capabilities.supportsScannerBuffering),
-            ("Hardware JPEG Compression", capabilities.supportsHardwareCompression),
-            ("Blank-Page Removal", capabilities.supportsBlankPageRemoval),
-            ("Deskew", capabilities.supportsDeskew),
-            ("Auto-Crop", capabilities.supportsAutoCrop),
-            ("Automatic Orientation", capabilities.supportsAutoRotate)
+            ("Hardware JPEG Compression", capabilities.supportsHardwareCompression)
         ]
         return ScannerDetailSection(title: "Features", systemImage: "checklist", rows: features.map { ScannerDetailRow(label: $0.0, value: $0.1 ? "Yes" : "No") })
     }
