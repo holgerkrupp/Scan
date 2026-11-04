@@ -1,4 +1,5 @@
 import AppKit
+import ImageCaptureCore
 import XCTest
 @testable import Scan
 
@@ -41,6 +42,12 @@ final class ScanCoreTests: XCTestCase {
         XCTAssertEqual(ImageCaptureScannerDevice.normalizedProgress(57), 0.57)
         XCTAssertEqual(ImageCaptureScannerDevice.normalizedProgress(150), 1)
         XCTAssertEqual(ImageCaptureScannerDevice.normalizedProgress(-1), 0)
+    }
+
+    func testImageCaptureFallsBackToSelectedUnitWhenDriverReportsNone() {
+        XCTAssertEqual(ImageCaptureScannerDevice.functionalUnitTypes(available: [], selected: .flatbed), [.flatbed])
+        let reported = [NSNumber(value: ICScannerFunctionalUnitType.flatbed.rawValue), NSNumber(value: ICScannerFunctionalUnitType.documentFeeder.rawValue)]
+        XCTAssertEqual(ImageCaptureScannerDevice.functionalUnitTypes(available: reported, selected: .flatbed), [.flatbed, .documentFeeder])
     }
 
     func testProfilePersistenceRoundTrip() {

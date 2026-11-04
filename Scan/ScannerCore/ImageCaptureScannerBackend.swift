@@ -143,6 +143,7 @@ final class ImageCaptureScannerDevice: NSObject, ScannerDevice, ScannerHardwareE
     private var scanner: ICScannerDevice?
     private var scanContinuation: AsyncThrowingStream<PageFrame, Error>.Continuation?
     private var selectionContinuation: CheckedContinuation<ICScannerFunctionalUnit, Error>?
+    private var initialUnitContinuation: CheckedContinuation<Void, Never>?
     private var pageIndex = 0
     private var cancelled = false
     private var activeSource: ScanSource?
@@ -169,18 +170,48 @@ final class ImageCaptureScannerDevice: NSObject, ScannerDevice, ScannerHardwareE
         self.scanner = scanner
         scanner.delegate = self
         do {
-            try await scanner.requestOpenSession(options: nil)
+            do {
+                try await scanner.requestOpenSession(options: nil)
+            } catch {
+                // Opening right after another session closed (the hardware-
+                // button monitor hands over to a scan this way) can fail once
+                // with -21344 while the driver is still busy; retry once.
+                try await Task.sleep(for: .milliseconds(500))
+                try await ensureNotClosed(while: scanner)
+                try await scanner.requestOpenSession(options: nil)
+            }
+            try await ensureNotClosed(while: scanner)
+            await waitForInitialFunctionalUnit(of: scanner)
+            try await ensureNotClosed(while: scanner)
             try await updateCapabilities(from: scanner)
+            try await ensureNotClosed(while: scanner)
             status = .idle
         } catch {
-            scanner.delegate = nil
-            self.scanner = nil
+            if self.scanner === scanner {
+                scanner.delegate = nil
+                self.scanner = nil
+            }
             throw error
         }
     }
 
+    /// `close()` can run while `open()` is still waiting on the device, for
+    /// example when a device-list refresh restarts hardware-button
+    /// monitoring. Image Capture hands out one shared `ICScannerDevice`, so a
+    /// session that finishes opening after that close would stay open with no
+    /// owner and every later open fails ("Failed to open a session on the
+    /// device"). Close it here instead and stop opening, unless another
+    /// device object has taken the scanner over in the meantime.
+    private func ensureNotClosed(while scanner: ICScannerDevice) async throws {
+        guard self.scanner !== scanner else { return }
+        if scanner.delegate == nil, scanner.hasOpenSession { try? await scanner.requestCloseSession(options: nil) }
+        throw CancellationError()
+    }
+
     func close() async {
         await stopHardwareEventObservation()
+        initialUnitContinuation?.resume()
+        initialUnitContinuation = nil
         guard let scanner else { return }
         if scanner.hasOpenSession { try? await scanner.requestCloseSession(options: nil) }
         scanner.delegate = nil
@@ -270,6 +301,11 @@ final class ImageCaptureScannerDevice: NSObject, ScannerDevice, ScannerHardwareE
     }
 
     func scannerDevice(_ scanner: ICScannerDevice, didSelect functionalUnit: ICScannerFunctionalUnit, error: Error?) {
+        if let initial = initialUnitContinuation {
+            initialUnitContinuation = nil
+            initial.resume()
+            return
+        }
         guard let continuation = selectionContinuation else { return }
         selectionContinuation = nil
         if let error { continuation.resume(throwing: error) }
@@ -286,9 +322,28 @@ final class ImageCaptureScannerDevice: NSObject, ScannerDevice, ScannerHardwareE
         finishScan(throwing: error)
     }
 
+    /// Image Capture selects the default functional unit right after a
+    /// session opens and reports it in an unsolicited didSelect. Some drivers
+    /// (Epson's ICA driver for the Perfection 3170, for one) are not ready
+    /// before then: the selected unit is still empty on a first open, a
+    /// selection request fails with -9922, and a scan requested before that
+    /// callback is silently dropped even when the unit kept its values from
+    /// an earlier session. So wait for it. The timeout keeps drivers that
+    /// never send the callback working, only slower to open.
+    private func waitForInitialFunctionalUnit(of scanner: ICScannerDevice) async {
+        await withCheckedContinuation { continuation in
+            initialUnitContinuation = continuation
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
+                guard let self, let pending = self.initialUnitContinuation else { return }
+                self.initialUnitContinuation = nil
+                pending.resume()
+            }
+        }
+    }
+
     private func updateCapabilities(from scanner: ICScannerDevice) async throws {
         let originalType = scanner.selectedFunctionalUnit.type
-        let available = Set(scanner.availableFunctionalUnitTypes.map { ICScannerFunctionalUnitType(rawValue: $0.uintValue) })
+        let available = Self.functionalUnitTypes(available: scanner.availableFunctionalUnitTypes, selected: originalType)
         var sources: [ScanSource] = []
         var resolutionsBySource: [ScanSource: [Int]] = [:]
         var area: ScannerCapabilities.ScanArea?
@@ -334,6 +389,9 @@ final class ImageCaptureScannerDevice: NSObject, ScannerDevice, ScannerHardwareE
 
     private func configure(unit: ICScannerFunctionalUnit, with options: ScanOptions) {
         unit.resolution = options.resolutionDPI
+        // Some drivers (Epson's ICA driver) leave the scan area empty; scanning
+        // an empty area never completes, so scan the whole glass instead.
+        if unit.scanArea.isEmpty { unit.scanArea = Self.fullScanArea(of: unit) }
         switch options.colorMode { case .color: unit.pixelDataType = .RGB; case .gray: unit.pixelDataType = .gray; case .lineart: unit.pixelDataType = .BW }
         if let feeder = unit as? ICScannerFunctionalUnitDocumentFeeder { feeder.duplexScanningEnabled = options.source == .adfDuplex }
     }
@@ -354,7 +412,7 @@ final class ImageCaptureScannerDevice: NSObject, ScannerDevice, ScannerHardwareE
     }
 
     private func scanArea(for unit: ICScannerFunctionalUnit) -> ScannerCapabilities.ScanArea {
-        let area = unit.scanArea
+        let area = unit.scanArea.isEmpty ? Self.fullScanArea(of: unit) : unit.scanArea
         return .init(width: Double(area.size.width), height: Double(area.size.height), unit: measurementUnitName(unit.measurementUnit))
     }
 
@@ -364,6 +422,19 @@ final class ImageCaptureScannerDevice: NSObject, ScannerDevice, ScannerHardwareE
 
     private func pixelFormat(for url: URL) -> PagePixelFormat {
         switch (try? url.resourceValues(forKeys: [.contentTypeKey]).contentType) { case .some(.jpeg): .jpeg; case .some(.png): .png; case .some(.tiff): .tiff; default: .unknown }
+    }
+
+    /// Some drivers (Epson's ICA driver for the Perfection 3170, for one)
+    /// report no available functional units, although the selected unit is
+    /// fully usable. Fall back to the selected unit so the scanner still gets
+    /// a source.
+    static func functionalUnitTypes(available: [NSNumber], selected: ICScannerFunctionalUnitType) -> Set<ICScannerFunctionalUnitType> {
+        let types = Set(available.compactMap { ICScannerFunctionalUnitType(rawValue: $0.uintValue) })
+        return types.isEmpty ? [selected] : types
+    }
+
+    static func fullScanArea(of unit: ICScannerFunctionalUnit) -> CGRect {
+        CGRect(origin: .zero, size: unit.physicalSize)
     }
 
     static func normalizedProgress(_ percentage: Double) -> Double {
