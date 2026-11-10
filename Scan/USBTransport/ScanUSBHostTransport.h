@@ -35,6 +35,11 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)bulkWrite:(NSData *)data timeout:(NSTimeInterval)timeout error:(NSError **)error;
 - (nullable NSData *)bulkReadLength:(NSUInteger)length timeout:(NSTimeInterval)timeout error:(NSError **)error;
 - (BOOL)abortWithError:(NSError **)error;
+/// Issues a USB port reset to recover a scanner that no longer accepts
+/// commands, e.g. after an earlier session ended mid-transfer because the app
+/// crashed. Reopens the session if the device re-enumerates. Must be called
+/// on the same queue as the transfers.
+- (BOOL)resetDeviceWithError:(NSError **)error;
 
 @end
 

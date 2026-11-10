@@ -35,11 +35,23 @@ final class FujitsuScanSnapDevice: ScannerDevice, ScannerHardwareEventSource {
         }
         ScanTrace.post("Opening \(identity.name) using the \(profile.name) profile.")
         try await transport.open()
-        commandEngine = FujitsuSCSIOverUSBCommandEngine(transport: transport, profile: profile)
-        try await commandEngine?.waitUntilReady()
-        if let inquiry = try await commandEngine?.inquiry() {
-            ScanTrace.post("Inquiry: \(inquiry.vendor) \(inquiry.product) \(inquiry.version).")
+        let commandEngine = FujitsuSCSIOverUSBCommandEngine(transport: transport, profile: profile)
+        self.commandEngine = commandEngine
+        do {
+            try await commandEngine.waitUntilReady()
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            // A session that ended mid-command (for example because the app
+            // crashed) leaves the scanner ignoring every later command until
+            // it is power-cycled. A USB reset brings it back.
+            ScanTrace.post("\(identity.name) is not responding (\(error.localizedDescription)); resetting the USB device.")
+            try await transport.reset()
+            try await commandEngine.waitUntilReady()
+            ScanTrace.post("\(identity.name) responds again after the USB reset.")
         }
+        let inquiry = try await commandEngine.inquiry()
+        ScanTrace.post("Inquiry: \(inquiry.vendor) \(inquiry.product) \(inquiry.version).")
         status = .idle
     }
 
