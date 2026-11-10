@@ -70,3 +70,9 @@ Respect any explicit, narrower project requirement that applies to the task. Do 
 - Never hide limitations, invent verification results, or compromise essential user-data protection.
 
 **Guiding principle: Good enough, reliable, understandable, and shipped is usually better than theoretically perfect but excessively complex.**
+
+## App skills for Siri AI
+
+- Adopt Apple's [app skills guidance](https://developer.apple.com/documentation/appintents/orchestrating-complex-actions-with-app-skills) for meaningful multi-step app workflows. Provide the necessary App Intents and app entities, then add app skills that explain how to combine those intents, relevant domain knowledge, and what to avoid.
+- Follow Apple's current skills-bundle format and Xcode target integration. Verify SDK and OS availability and preserve the app's existing supported platforms; the Siri AI Developer Preview and its APIs may change.
+- Treat skills as guidance, not deterministic enforcement. Keep validation, privacy, permissions, and confirmation of consequential actions in the app and its intents.
