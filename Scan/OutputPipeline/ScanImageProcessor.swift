@@ -7,7 +7,7 @@ struct ProcessedPage: Sendable {
     let image: CGImage
 }
 
-enum ScanImageProcessor {
+nonisolated enum ScanImageProcessor {
     static func process(_ frame: PageFrame, settings: ImageProcessingSettings, outputDPI: Int) throws -> PageFrame? {
         guard let image = NSImage(data: frame.data)?.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
             throw ScannerError.outputFailed("Could not decode page \(frame.pageIndex).")

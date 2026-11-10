@@ -42,7 +42,7 @@ final class PageQuickLookController: NSObject, QLPreviewPanelDataSource, QLPrevi
         withObservationTracking {
             _ = workspace.selectedPageID
             _ = workspace.pages
-        } onChange: {
+        } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 self?.reload()
                 self?.observeSelection()
