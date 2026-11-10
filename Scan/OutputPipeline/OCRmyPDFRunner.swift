@@ -2,7 +2,7 @@ import Foundation
 
 /// Languages offered for OCR, with the identifiers the two OCR engines use:
 /// Vision's BCP 47 code and Tesseract's (and so ocrmypdf's) ISO 639-2 code.
-enum OCRLanguage: String, CaseIterable, Identifiable, Codable, Sendable {
+nonisolated enum OCRLanguage: String, CaseIterable, Identifiable, Codable, Sendable {
     case german, english, french, spanish, italian, dutch, polish, portuguese
 
     var id: String { rawValue }
@@ -102,7 +102,7 @@ nonisolated struct OCRmyPDFRunner: Sendable {
     /// other files are ignored. `onFile` is told which PDF (1-based, of the
     /// PDFs in `urls`) is about to be processed.
     @discardableResult
-    func process(_ urls: [URL], language: OCRLanguage, onFile: (@Sendable (Int, Int, URL) async -> Void)? = nil) async throws -> [URL] {
+    func process(_ urls: [URL], language: OCRLanguage, onFile: (@MainActor @Sendable (Int, Int, URL) -> Void)? = nil) async throws -> [URL] {
         var processed: [URL] = []
         let pdfs = urls.filter { $0.pathExtension.lowercased() == "pdf" }
         for (index, url) in pdfs.enumerated() {

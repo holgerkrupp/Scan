@@ -354,8 +354,8 @@ final class ScannerWorkspaceViewModel {
 
     convenience init() { self.init(discovery: CompositeScannerDiscovery(), registry: .live, outputWriter: ScanOutputWriter(), profileStore: ScanProfileStore(defaults: .standard)) }
 
-    init(discovery: ScannerDiscovery, registry: ScannerDriverRegistry, outputWriter: ScanOutputWriter, profileStore: ScanProfileStore, automaticRefreshDelay: Duration = .seconds(1), statisticsStore: ScanStatisticsStore = .shared) {
-        self.discovery = discovery; self.registry = registry; self.outputWriter = outputWriter; self.profileStore = profileStore; self.automaticRefreshDelay = automaticRefreshDelay; self.statisticsStore = statisticsStore
+    init(discovery: ScannerDiscovery, registry: ScannerDriverRegistry, outputWriter: ScanOutputWriter, profileStore: ScanProfileStore, automaticRefreshDelay: Duration = .seconds(1), statisticsStore: ScanStatisticsStore? = nil) {
+        self.discovery = discovery; self.registry = registry; self.outputWriter = outputWriter; self.profileStore = profileStore; self.automaticRefreshDelay = automaticRefreshDelay; self.statisticsStore = statisticsStore ?? .shared
         let hardwareStore = HardwareButtonSettingsStore(defaults: .standard)
         self.hardwareSettingsStore = hardwareStore
         self.hardwareButtonSettings = hardwareStore.load()
@@ -713,9 +713,7 @@ final class ScannerWorkspaceViewModel {
         log("Running ocrmypdf (\(language.tesseractCode)) on \(pdfs.count) PDF\(pdfs.count == 1 ? "" : "s")…")
         do {
             let processed = try await runner.process(pdfs, language: language) { [weak self] file, total, url in
-                await MainActor.run {
-                    self?.postScanActivity = .ocrmypdf(file: file, of: total, name: url.lastPathComponent, language: language.displayName, startedAt: startedAt)
-                }
+                self?.postScanActivity = .ocrmypdf(file: file, of: total, name: url.lastPathComponent, language: language.displayName, startedAt: startedAt)
             }
             lastOutputByteCount = outputs.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { Int64($0) } ?? 0) }
             log("OCR finished for \(processed.map(\.lastPathComponent).joined(separator: ", ")).")

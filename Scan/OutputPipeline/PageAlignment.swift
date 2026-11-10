@@ -12,7 +12,7 @@ import Foundation
 /// segmentation (rectangle detection as a second attempt). When no page
 /// outline can be found, the skew is estimated from the content instead:
 /// the angle at which the rows of dark pixels line up best.
-enum PageAlignment {
+nonisolated enum PageAlignment {
     /// Largest tilt a feeder plausibly produces; anything larger is treated
     /// as a detection error.
     static let maximumAngleDegrees = 12.0

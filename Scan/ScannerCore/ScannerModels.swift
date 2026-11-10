@@ -6,7 +6,7 @@ enum ScanTrace {
     static func post(_ message: String) { NotificationCenter.default.post(name: notificationName, object: nil, userInfo: [messageKey: message]) }
 }
 
-struct USBDeviceID: Hashable, Sendable, Codable {
+nonisolated struct USBDeviceID: Hashable, Sendable, Codable {
     let vendorID: UInt16
     let productID: UInt16
     var displayString: String { String(format: "0x%04x/0x%04x", vendorID, productID) }
@@ -206,7 +206,7 @@ struct ScannerCapabilities: Equatable, Sendable, Codable {
 
 enum PageSide: String, Sendable, Codable { case front, back, unknown }
 enum PagePixelFormat: String, Sendable, Codable { case jpeg, png, tiff, rgb8, gray8, unknown }
-struct PageFrame: Identifiable, Sendable, Codable { let id: UUID; let pageIndex: Int; let side: PageSide; let pixelFormat: PagePixelFormat; let width: Int; let height: Int; let resolutionDPI: Int; let data: Data; init(id: UUID = UUID(), pageIndex: Int, side: PageSide, pixelFormat: PagePixelFormat, width: Int, height: Int, resolutionDPI: Int, data: Data) { self.id = id; self.pageIndex = pageIndex; self.side = side; self.pixelFormat = pixelFormat; self.width = width; self.height = height; self.resolutionDPI = resolutionDPI; self.data = data } }
+nonisolated struct PageFrame: Identifiable, Sendable, Codable { let id: UUID; let pageIndex: Int; let side: PageSide; let pixelFormat: PagePixelFormat; let width: Int; let height: Int; let resolutionDPI: Int; let data: Data; init(id: UUID = UUID(), pageIndex: Int, side: PageSide, pixelFormat: PagePixelFormat, width: Int, height: Int, resolutionDPI: Int, data: Data) { self.id = id; self.pageIndex = pageIndex; self.side = side; self.pixelFormat = pixelFormat; self.width = width; self.height = height; self.resolutionDPI = resolutionDPI; self.data = data } }
 struct StoredPage: Identifiable, Sendable { let id: UUID; let pageIndex: Int; let side: PageSide; let pixelFormat: PagePixelFormat; let width: Int; let height: Int; let resolutionDPI: Int; let fileURL: URL; nonisolated init(frame: PageFrame, fileURL: URL) { id = frame.id; pageIndex = frame.pageIndex; side = frame.side; pixelFormat = frame.pixelFormat; width = frame.width; height = frame.height; resolutionDPI = frame.resolutionDPI; self.fileURL = fileURL } }
 
 enum ScannerStatus: Equatable, Sendable {

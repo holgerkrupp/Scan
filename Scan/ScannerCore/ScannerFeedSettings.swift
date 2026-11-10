@@ -52,7 +52,7 @@ enum MultifeedDetection: String, Codable, CaseIterable, Identifiable, Sendable {
 
 /// Per-scanner paper-path safety options, edited in the scanner details
 /// dialog and read by the driver whenever a scan starts.
-struct ScannerFeedSettings: Codable, Hashable, Sendable {
+nonisolated struct ScannerFeedSettings: Codable, Hashable, Sendable {
     var multifeedDetection: MultifeedDetection = .ultrasonic
     /// Read `GET HW STATUS` before the first sheet and refuse to start while
     /// the cover is open or the scanner still reports an error.
