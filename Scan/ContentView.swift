@@ -294,6 +294,10 @@ struct ContentView: View {
                     Text("Trims the paper margins down to the printed content, for receipts and clippings.").font(.caption).foregroundStyle(.secondary)
                 }
                 Toggle("Automatic orientation", isOn: profile(\.options.processing.autoRotate))
+                VStack(alignment: .leading, spacing: 4) {
+                    Toggle("AI page orientation", isOn: profile(\.options.processing.aiOrientation))
+                    Text("Apple's on-device text recognition reads each page and turns it so the text is upright, including pages fed upside down. Pages without text keep the automatic orientation above.").font(.caption).foregroundStyle(.secondary)
+                }
             }
             Section("Diagnostics") {
                 if viewModel.selectedScannerUsesEpjitsuProtocol, let profile = viewModel.selectedEpjitsuProfile {
