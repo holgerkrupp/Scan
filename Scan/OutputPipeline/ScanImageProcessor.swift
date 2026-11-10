@@ -17,7 +17,10 @@ enum ScanImageProcessor {
         // Straighten and crop to the page first, then optionally to the content.
         if settings.deskew { rendered = PageAlignment.align(rendered)?.image ?? rendered }
         if settings.autoCrop { rendered = cropToContent(rendered) ?? rendered }
-        if settings.autoRotate && rendered.width > rendered.height { rendered = rotate(rendered, degrees: 90) ?? rendered }
+        // The text decides when it can; the landscape rule only covers pages it cannot read.
+        let textRotation = settings.aiOrientation ? TextOrientationDetector.uprightRotation(for: rendered) : nil
+        if let textRotation { rendered = rotate(rendered, degrees: textRotation) ?? rendered }
+        else if settings.autoRotate && rendered.width > rendered.height { rendered = rotate(rendered, degrees: 90) ?? rendered }
         if settings.rotation != .degrees0 { rendered = rotate(rendered, degrees: settings.rotation.rawValue) ?? rendered }
         if settings.whitenPaper { rendered = whitenPaper(rendered) ?? rendered }
         if settings.paperCleanup > 0 { rendered = applyPaperCleanup(rendered, amount: settings.paperCleanup) ?? rendered }

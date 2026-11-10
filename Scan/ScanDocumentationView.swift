@@ -130,6 +130,7 @@ struct ScanDocumentationView: View {
                 DefinitionRow(term: "Deskew and crop to page", definition: "Straightens a skewed sheet and crops away its paper edges. It is the automatic equivalent of Edit > Auto-Align Page.")
                 DefinitionRow(term: "Crop to content", definition: "Trims paper margins down to the printed content. It is especially useful for receipts, clippings, and small documents on a larger sheet.")
                 DefinitionRow(term: "Automatic orientation", definition: "Detects page orientation and rotates pages so text reads upright when the selected scanner backend supports it.")
+                DefinitionRow(term: "AI page orientation", definition: "Uses Apple's on-device text recognition (Vision) to find which way the text on each page runs and turns the page upright, also when it was fed upside down. Nothing leaves the Mac. Pages with too little text keep the result of Automatic orientation. Takes a fraction of a second per page.")
             }
             NoteCard(title: "Processing versus export", icon: "arrow.down.right.and.arrow.up.left", text: "Processing changes what you review in the page grid. Export then writes exactly the visible pages, applying the selected output resolution and compression.")
         }
