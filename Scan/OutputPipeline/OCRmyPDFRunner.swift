@@ -99,11 +99,14 @@ nonisolated struct OCRmyPDFRunner: Sendable {
     }
 
     /// OCRs each PDF in `urls` in place and returns the PDFs it processed;
-    /// other files are ignored.
+    /// other files are ignored. `onFile` is told which PDF (1-based, of the
+    /// PDFs in `urls`) is about to be processed.
     @discardableResult
-    func process(_ urls: [URL], language: OCRLanguage) async throws -> [URL] {
+    func process(_ urls: [URL], language: OCRLanguage, onFile: (@Sendable (Int, Int, URL) async -> Void)? = nil) async throws -> [URL] {
         var processed: [URL] = []
-        for url in urls where url.pathExtension.lowercased() == "pdf" {
+        let pdfs = urls.filter { $0.pathExtension.lowercased() == "pdf" }
+        for (index, url) in pdfs.enumerated() {
+            await onFile?(index + 1, pdfs.count, url)
             let output = url.deletingLastPathComponent().appendingPathComponent(".\(url.deletingPathExtension().lastPathComponent)-ocr-\(UUID().uuidString).pdf")
             defer { try? FileManager.default.removeItem(at: output) }
             let result = try await run(arguments: Self.arguments(input: url, output: output, language: language))
