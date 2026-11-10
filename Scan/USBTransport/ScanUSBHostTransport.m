@@ -27,6 +27,10 @@
 @property(nonatomic) UInt8 libusbBulkOutEndpoint;
 @property(nonatomic) BOOL usingLibUSB;
 @property(nonatomic, copy) NSString *endpointSummary;
+/// Serialises `abortWithError:` - which runs off the transfer queue so it can
+/// interrupt a blocked transfer - against `close`, which frees the libusb
+/// handle. Without it abort used a freed handle.
+@property(nonatomic, strong) NSLock *handleLock;
 @end
 
 /// The process-wide libusb context for `usesSharedLibUSBContext`, created on
@@ -48,6 +52,7 @@ static libusb_context *ScanSharedLibUSBContext(int *result) {
     self = [super init];
     if (self) {
         _endpointSummary = @"Not opened";
+        _handleLock = [[NSLock alloc] init];
         _clearsEndpointHalts = YES;
     }
     return self;
@@ -197,6 +202,12 @@ static libusb_context *ScanSharedLibUSBContext(int *result) {
 }
 
 - (void)close {
+    [self.handleLock lock];
+    [self closeLocked];
+    [self.handleLock unlock];
+}
+
+- (void)closeLocked {
     if (self.libusbHandle) {
         libusb_release_interface(self.libusbHandle, self.libusbInterfaceNumber);
         libusb_close(self.libusbHandle);
@@ -386,8 +397,15 @@ static libusb_context *ScanSharedLibUSBContext(int *result) {
 }
 
 - (BOOL)abortWithError:(NSError **)error {
+    [self.handleLock lock];
+    BOOL ok = [self abortLockedWithError:error];
+    [self.handleLock unlock];
+    return ok;
+}
+
+- (BOOL)abortLockedWithError:(NSError **)error {
     if (self.usingLibUSB) {
-        if (!self.clearsEndpointHalts) {
+        if (!self.clearsEndpointHalts || !self.libusbHandle) {
             return YES;
         }
         int inResult = libusb_clear_halt(self.libusbHandle, self.libusbBulkInEndpoint);
