@@ -28,6 +28,9 @@ struct ScannerDetails: Sendable {
     let hardwareEvents: ScannerHardwareEventCapabilities?
     /// IORegistry properties of the USB device, already rendered as text.
     let usbRegistryProperties: [String: String]
+    /// The driver honours `ScannerFeedSettings` (multifeed detection and the
+    /// sensor check); only the Fujitsu SCSI-over-USB engine does.
+    var supportsFeedSettings = false
 
     init(identity: ScannerIdentity, driverName: String? = nil, modelProfileName: String? = nil, capabilities: ScannerCapabilities? = nil, hardwareEvents: ScannerHardwareEventCapabilities? = nil, usbRegistryProperties: [String: String] = [:]) {
         self.identity = identity; self.driverName = driverName; self.modelProfileName = modelProfileName; self.capabilities = capabilities; self.hardwareEvents = hardwareEvents; self.usbRegistryProperties = usbRegistryProperties
@@ -132,7 +135,7 @@ extension ScannerDriverRegistry {
         case let epjitsu as EpjitsuScanSnapDevice: epjitsu.profile.name
         default: nil
         }
-        return ScannerDetails(
+        var details = ScannerDetails(
             identity: identity,
             driverName: driver.name,
             modelProfileName: modelProfileName,
@@ -140,6 +143,8 @@ extension ScannerDriverRegistry {
             hardwareEvents: (device as? ScannerHardwareEventSource)?.hardwareEventCapabilities,
             usbRegistryProperties: usbRegistryProperties
         )
+        details.supportsFeedSettings = device is FujitsuScanSnapDevice
+        return details
     }
 }
 

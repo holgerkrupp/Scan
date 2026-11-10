@@ -894,5 +894,5 @@ final class ScannerWorkspaceViewModel {
         destinationFolder = DestinationFolderStore.defaultFolder
         log("Destination reset to \(destinationFolder.path).")
     }
-    private func log(_ message: String) { let formatter = DateFormatter(); formatter.timeStyle = .medium; activityLog.insert("[\(formatter.string(from: Date()))] \(message)", at: 0); activityLog = Array(activityLog.prefix(100)) }
+    private func log(_ message: String) { ScanSystemLog.write(message); let formatter = DateFormatter(); formatter.timeStyle = .medium; activityLog.insert("[\(formatter.string(from: Date()))] \(message)", at: 0); activityLog = Array(activityLog.prefix(100)) }
 }

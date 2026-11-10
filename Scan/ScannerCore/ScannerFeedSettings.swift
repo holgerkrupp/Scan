@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// How the scanner detects two or more sheets pulled in at once, e.g. pages
 /// still held together by a staple. Maps onto the Fujitsu double-feed mode
@@ -78,6 +79,7 @@ struct ScannerFeedSettings: Codable, Hashable, Sendable {
 struct ScannerFeedSettingsStore {
     private let defaults: UserDefaults
     private let keyPrefix = "scan.feedSettings."
+    private let systemLogKey = "scan.diagnostics.systemLog"
 
     init(defaults: UserDefaults) { self.defaults = defaults }
 
@@ -91,5 +93,23 @@ struct ScannerFeedSettingsStore {
     func save(_ settings: ScannerFeedSettings, for identity: ScannerIdentity) {
         guard let data = try? JSONEncoder().encode(settings) else { return }
         defaults.set(data, forKey: keyPrefix + identity.id)
+    }
+
+    /// Copy every activity-log line to the macOS unified log (default on), so
+    /// a hung or crashed session can be read afterwards with `log show`.
+    var writesActivityToSystemLog: Bool {
+        get { defaults.object(forKey: systemLogKey) as? Bool ?? true }
+        nonmutating set { defaults.set(newValue, forKey: systemLogKey) }
+    }
+}
+
+enum ScanSystemLog {
+    static let subsystem = Bundle.main.bundleIdentifier ?? "Scan"
+    static let logger = Logger(subsystem: subsystem, category: "activity")
+    static let terminalCommand = "log show --last 30m --info --predicate 'subsystem == \"\(subsystem)\"'"
+
+    static func write(_ message: String) {
+        guard ScannerFeedSettingsStore(defaults: .standard).writesActivityToSystemLog else { return }
+        logger.notice("\(message, privacy: .public)")
     }
 }
