@@ -255,6 +255,19 @@ final class IOKitUSBDeviceTransport: @unchecked Sendable, USBDeviceTransport {
         }
     }
 
+    func reset() async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            ioQueue.async {
+                do {
+                    try self.hostTransport.resetDevice()
+                    continuation.resume()
+                } catch {
+                    continuation.resume(throwing: ScannerError.transportUnavailable(error.localizedDescription))
+                }
+            }
+        }
+    }
+
     func abort() async {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {

@@ -28,9 +28,12 @@
 @property(nonatomic) BOOL usingLibUSB;
 @property(nonatomic, copy) NSString *endpointSummary;
 /// Serialises `abortWithError:` - which runs off the transfer queue so it can
-/// interrupt a blocked transfer - against `close`, which frees the libusb
-/// handle. Without it abort used a freed handle.
+/// interrupt a blocked transfer - against `close` and the reset, which free or
+/// replace the libusb handle. Without it abort used a freed handle.
 @property(nonatomic, strong) NSLock *handleLock;
+@property(nonatomic) UInt16 openedVendorID;
+@property(nonatomic) UInt16 openedProductID;
+@property(nonatomic) UInt32 openedLocationID;
 @end
 
 /// The process-wide libusb context for `usesSharedLibUSBContext`, created on
@@ -63,6 +66,9 @@ static libusb_context *ScanSharedLibUSBContext(int *result) {
               locationID:(UInt32)locationID
                    error:(NSError **)error {
     [self close];
+    self.openedVendorID = vendorID;
+    self.openedProductID = productID;
+    self.openedLocationID = locationID;
 
     NSError *libusbError = nil;
     if ([self openLibUSBWithVendorID:vendorID productID:productID error:&libusbError]) {
@@ -441,6 +447,42 @@ static libusb_context *ScanSharedLibUSBContext(int *result) {
         ok = [self.bulkOutPipe abortWithOption:IOUSBHostAbortOptionSynchronous error:error] && ok;
     }
     return ok;
+}
+
+- (BOOL)resetDeviceWithError:(NSError **)error {
+    [self.handleLock lock];
+    int result = LIBUSB_ERROR_NOT_SUPPORTED;
+    IOReturn legacyResult = kIOReturnUnsupported;
+    if (self.usingLibUSB && self.libusbHandle) {
+        result = libusb_reset_device(self.libusbHandle);
+    } else if (self.usingLegacyTransport && self.legacyDeviceInterface) {
+        legacyResult = (*self.legacyDeviceInterface)->ResetDevice(self.legacyDeviceInterface);
+    }
+    // A reset that made the device re-enumerate invalidates the handle, so
+    // the session is reopened from scratch.
+    BOOL reopen = result == LIBUSB_ERROR_NOT_FOUND;
+    if (reopen) {
+        [self closeLocked];
+    }
+    [self.handleLock unlock];
+
+    if (result == LIBUSB_SUCCESS || legacyResult == kIOReturnSuccess) {
+        return YES;
+    }
+    if (reopen) {
+        [NSThread sleepForTimeInterval:1.0];
+        return [self openWithVendorID:self.openedVendorID
+                            productID:self.openedProductID
+                           locationID:self.openedLocationID
+                                error:error];
+    }
+    NSString *message = self.usingLibUSB
+        ? [NSString stringWithFormat:@"libusb device reset failed: %s (%d).", libusb_error_name(result), result]
+        : self.usingLegacyTransport
+            ? [NSString stringWithFormat:@"Legacy USB device reset failed: 0x%08x.", legacyResult]
+            : @"The USB session does not support a device reset.";
+    [self assignError:error message:message code:8];
+    return NO;
 }
 
 - (UInt32)millisecondsForTimeout:(NSTimeInterval)timeout {

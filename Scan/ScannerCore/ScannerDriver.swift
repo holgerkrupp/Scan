@@ -81,6 +81,9 @@ protocol USBDeviceTransport: Sendable {
     func open() async throws
     func close() async
     func abort() async
+    /// Resets the USB device so a scanner that stopped accepting commands
+    /// responds again, without unplugging it or restarting the Mac.
+    func reset() async throws
     func controlTransfer(request: USBControlRequest) async throws -> Data
     func bulkWrite(endpoint: UInt8, data: Data, timeoutMilliseconds: UInt32) async throws
     func bulkRead(endpoint: UInt8, length: Int, timeoutMilliseconds: UInt32) async throws -> Data
@@ -88,6 +91,9 @@ protocol USBDeviceTransport: Sendable {
 
 extension USBDeviceTransport {
     func abort() async {}
+    func reset() async throws {
+        throw ScannerError.transportUnavailable("This USB transport cannot reset the device.")
+    }
 }
 
 struct USBControlRequest: Sendable {
