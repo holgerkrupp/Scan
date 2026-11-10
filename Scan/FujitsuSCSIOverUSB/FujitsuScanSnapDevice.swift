@@ -214,6 +214,10 @@ private final class FujitsuSCSIOverUSBCommandEngine {
 
     private let commandTimeout: UInt32 = 30_000
     private let shortCommandTimeout: UInt32 = 500
+    private let recoveryTimeout: UInt32 = 3_000
+    /// Set when the scanner no longer accepts commands mid-session. Further
+    /// commands then fail at once instead of each waiting 30 s.
+    private var isUnresponsive = false
     private let dataTimeout: UInt32 = 30_000
     private let commandWrapperLength = 0x1f
     private let commandWrapperOffset = 0x13
@@ -285,6 +289,7 @@ private final class FujitsuSCSIOverUSBCommandEngine {
 
     func scan(options: ScanOptions, isCancelled: @escaping () -> Bool, onPage: @escaping (PageFrame) async throws -> Void) async throws -> Int {
         let plan = FujitsuScanPlan(options: options, profile: profile)
+        isUnresponsive = false
 
         ScanTrace.post("Preparing \(plan.traceDescription).")
         do {
@@ -383,6 +388,17 @@ private final class FujitsuSCSIOverUSBCommandEngine {
             try? await modeSelectBuffer(mode: .off, tolerateFailure: true)
             return deliveredPageCount
         } catch {
+            if isUnresponsive {
+                // Every further command would only wait for its own timeout
+                // and keep the Scan button disabled for minutes.
+                ScanTrace.post("Scanner stopped responding on USB; skipping halt and cancel.")
+                if let pendingSheet, let frames = try? await pendingSheet.value {
+                    for frame in frames {
+                        try? await onPage(frame)
+                    }
+                }
+                throw error
+            }
             if profile.usesSANECancelFlow {
                 // SANE sends nothing when the batch never started (for example
                 // an empty feeder) and only the cancel afterwards.
@@ -1203,10 +1219,20 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         shortTimeout: Bool = false
     ) async throws -> Data {
         lastReadHitEndOfMedium = false
+        if isUnresponsive {
+            throw ScannerError.transportUnavailable("The scanner stopped responding on USB. Check it for a paper jam, then scan again.")
+        }
         var wrapper = [UInt8](repeating: 0, count: commandWrapperLength)
         wrapper[0] = 0x43
         wrapper.replaceSubrange(commandWrapperOffset..<(commandWrapperOffset + scsiCommand.count), with: scsiCommand)
-        try await transport.bulkWrite(endpoint: 0, data: Data(wrapper), timeoutMilliseconds: shortTimeout ? shortCommandTimeout : commandTimeout)
+        do {
+            try await transport.bulkWrite(endpoint: 0, data: Data(wrapper), timeoutMilliseconds: shortTimeout ? shortCommandTimeout : commandTimeout)
+        } catch {
+            // A scanner that does not even take a command block is gone (jam,
+            // cover opened, powered off); stop talking to it.
+            if !shortTimeout { isUnresponsive = true }
+            throw error
+        }
 
         if let output, !output.isEmpty {
             try await transport.bulkWrite(endpoint: 0, data: output, timeoutMilliseconds: dataTimeout)
@@ -1227,7 +1253,7 @@ private final class FujitsuSCSIOverUSBCommandEngine {
                 if let recovered = try? await transport.bulkRead(
                     endpoint: 0,
                     length: statusLength,
-                    timeoutMilliseconds: commandTimeout
+                    timeoutMilliseconds: recoveryTimeout
                 ), recovered.count == statusLength {
                     let recoveredStatus = [UInt8](recovered)[statusOffset]
                     ScanTrace.post("Recovered SCSI status \(recoveredStatus) after failed data phase.")
@@ -1239,6 +1265,7 @@ private final class FujitsuSCSIOverUSBCommandEngine {
                     }
                 } else {
                     ScanTrace.post("No scanner status packet was recoverable after the failed data phase.")
+                    isUnresponsive = true
                 }
                 throw error
             }
