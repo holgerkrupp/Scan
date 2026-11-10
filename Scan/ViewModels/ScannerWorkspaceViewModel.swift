@@ -250,6 +250,33 @@ actor ScanPageStore {
     func clear() { try? FileManager.default.removeItem(at: folder) }
 }
 
+/// Long-running work after the scanner has finished - text recognition,
+/// the Apple Intelligence filename and ocrmypdf - shown in place of the Scan
+/// button. `fraction` is nil when the step cannot report its progress.
+struct PostScanActivity: Equatable {
+    var symbol: String
+    var title: String
+    var detail: String
+    var fraction: Double?
+    /// When the whole export started; drives the elapsed-time display.
+    var startedAt: Date
+
+    static func step(_ progress: ExportProgress, startedAt: Date) -> PostScanActivity {
+        switch progress {
+        case let .readingText(page, total):
+            PostScanActivity(symbol: "text.viewfinder", title: "Reading text for the filename", detail: "Page \(page) of \(total) · Vision OCR", fraction: Double(page - 1) / Double(max(total, 1)), startedAt: startedAt)
+        case .proposingName:
+            PostScanActivity(symbol: "apple.intelligence", title: "Apple Intelligence is naming the document", detail: "Proposing a title from the recognized text", fraction: nil, startedAt: startedAt)
+        case let .writingPage(page, total, recognizingText):
+            PostScanActivity(symbol: recognizingText ? "doc.text.magnifyingglass" : "doc.richtext", title: recognizingText ? "Recognizing text (OCR)" : "Writing the export", detail: "Page \(page) of \(total)", fraction: Double(page - 1) / Double(max(total, 1)), startedAt: startedAt)
+        }
+    }
+
+    static func ocrmypdf(file: Int, of total: Int, name: String, language: String, startedAt: Date) -> PostScanActivity {
+        PostScanActivity(symbol: "doc.text.magnifyingglass", title: "Running OCR (ocrmypdf)", detail: total > 1 ? "PDF \(file) of \(total) · \(name) · \(language)" : "\(name) · \(language)", fraction: total > 1 ? Double(file - 1) / Double(total) : nil, startedAt: startedAt)
+    }
+}
+
 @MainActor
 @Observable
 final class ScannerWorkspaceViewModel {
@@ -269,6 +296,8 @@ final class ScannerWorkspaceViewModel {
     private let ocrSettingsStore = OCRSettingsStore(defaults: .standard)
     /// True while ocrmypdf runs on the last export.
     var isRunningOCR = false
+    /// Set while an export runs its OCR and AI steps; nil otherwise.
+    private(set) var postScanActivity: PostScanActivity?
     var status: ScannerStatus = .disconnected
     /// The scans as delivered, in display order. They stay for the whole
     /// review session so the processing options can be re-applied.
@@ -663,13 +692,16 @@ final class ScannerWorkspaceViewModel {
     func saveExport(destinationOverride: URL? = nil) async {
         await waitForProcessing()
         guard !pages.isEmpty else { status = .error(rawPages.isEmpty ? "There are no pages to export." : "Every page was found blank; turn off blank-page removal to export them."); return }
-        do { let result = try await outputWriter.write(pages: pages, options: selectedProfile.options, destinationFolder: destinationOverride ?? destinationFolder, ocrLanguage: ocrSettings.language); lastOutputs = result.outputURLs; lastOutputByteCount = result.outputByteCount; status = .idle; log("Exported \(result.pagesScanned) page\(result.pagesScanned == 1 ? "" : "s") (\(ByteCountFormatter.string(fromByteCount: result.outputByteCount, countStyle: .file)))."); await runOCRmyPDFIfEnabled(on: result.outputURLs) }
+        let startedAt = Date()
+        outputWriter.onProgress = { [weak self] progress in self?.postScanActivity = .step(progress, startedAt: startedAt) }
+        defer { outputWriter.onProgress = nil; postScanActivity = nil }
+        do { let result = try await outputWriter.write(pages: pages, options: selectedProfile.options, destinationFolder: destinationOverride ?? destinationFolder, ocrLanguage: ocrSettings.language); lastOutputs = result.outputURLs; lastOutputByteCount = result.outputByteCount; status = .idle; log("Exported \(result.pagesScanned) page\(result.pagesScanned == 1 ? "" : "s") (\(ByteCountFormatter.string(fromByteCount: result.outputByteCount, countStyle: .file)))."); await runOCRmyPDFIfEnabled(on: result.outputURLs, startedAt: startedAt) }
         catch { status = .error(error.localizedDescription); log("Export failed: \(error.localizedDescription)") }
     }
 
     /// Runs ocrmypdf on the exported PDFs when Settings ▸ Language enables it.
     /// A failure keeps the exported files untouched and is reported in the status.
-    private func runOCRmyPDFIfEnabled(on outputs: [URL]) async {
+    private func runOCRmyPDFIfEnabled(on outputs: [URL], startedAt: Date) async {
         let pdfs = outputs.filter { $0.pathExtension.lowercased() == "pdf" }
         guard ocrSettings.runOCRmyPDF, !pdfs.isEmpty else { return }
         guard let runner = OCRmyPDFRunner.locate() else {
@@ -681,7 +713,11 @@ final class ScannerWorkspaceViewModel {
         defer { isRunningOCR = false }
         log("Running ocrmypdf (\(language.tesseractCode)) on \(pdfs.count) PDF\(pdfs.count == 1 ? "" : "s")…")
         do {
-            let processed = try await runner.process(pdfs, language: language)
+            let processed = try await runner.process(pdfs, language: language) { [weak self] file, total, url in
+                await MainActor.run {
+                    self?.postScanActivity = .ocrmypdf(file: file, of: total, name: url.lastPathComponent, language: language.displayName, startedAt: startedAt)
+                }
+            }
             lastOutputByteCount = outputs.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { Int64($0) } ?? 0) }
             log("OCR finished for \(processed.map(\.lastPathComponent).joined(separator: ", ")).")
         } catch {

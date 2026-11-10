@@ -107,7 +107,8 @@ struct ContentView: View {
             }
             Divider()
             HStack(spacing: 10) {
-                if viewModel.isScanning { Button(role: .cancel) { Task { await viewModel.cancelScan() } } label: { Label("Cancel", systemImage: "xmark.circle") } }
+                if let activity = viewModel.postScanActivity { PostScanActivityView(activity: activity) }
+                else if viewModel.isScanning { Button(role: .cancel) { Task { await viewModel.cancelScan() } } label: { Label("Cancel", systemImage: "xmark.circle") } }
                 else {
                     Button { Task { await viewModel.startScan() } } label: {
                         Label("Scan", systemImage: "scanner")
@@ -352,3 +353,32 @@ private struct PageThumbnail: View {
 }
 
 #Preview { ContentView() }
+
+/// Progress of the OCR and Apple Intelligence steps after a scan, shown
+/// where the Scan button normally is: what runs, a bar (indeterminate when
+/// the step cannot report progress), the current page or file, and the time
+/// since the export started.
+struct PostScanActivityView: View {
+    let activity: PostScanActivity
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: activity.symbol).foregroundStyle(.tint)
+                Text(activity.title).font(.callout.weight(.semibold)).lineLimit(1)
+                Spacer(minLength: 8)
+                Text(activity.startedAt, style: .timer).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            }
+            if let fraction = activity.fraction {
+                ProgressView(value: fraction).progressViewStyle(.linear)
+            } else {
+                ProgressView().progressViewStyle(.linear)
+            }
+            Text(activity.detail).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+        }
+        .frame(width: 320)
+        .frame(minHeight: 42)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(activity.title), \(activity.detail)")
+    }
+}
