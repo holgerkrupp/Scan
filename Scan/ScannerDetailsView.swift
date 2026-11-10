@@ -3,41 +3,46 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// Sheet opened by double-clicking a scanner in the sidebar. Shows every
-/// detail Scan knows about the scanner without opening the device.
+/// detail Scan knows about the scanner without opening the device, and its
+/// paper-feed options.
 struct ScannerDetailsView: View {
+    /// Sidebar topics, laid out like the Scan Help window.
+    private enum Topic: String, CaseIterable, Identifiable {
+        case overview = "Overview"
+        case details = "Details"
+        case feeding = "Feeding & Sensors"
+        case diagnostics = "Diagnostics"
+
+        var id: Self { self }
+
+        var icon: String {
+            switch self {
+            case .overview: "scanner"
+            case .details: "info.circle"
+            case .feeding: "doc.on.doc"
+            case .diagnostics: "stethoscope"
+            }
+        }
+    }
+
     let details: ScannerDetails
     @Environment(\.dismiss) private var dismiss
+    @State private var selectedTopic: Topic = .overview
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Image(systemName: "scanner").font(.largeTitle).foregroundStyle(.tint)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(details.identity.name).font(.title2.weight(.semibold))
-                    Text("\(details.identity.manufacturer) · \(details.identity.connectionKind.rawValue)").foregroundStyle(.secondary)
+            NavigationSplitView {
+                List(Topic.allCases, selection: $selectedTopic) { topic in
+                    Label(topic.rawValue, systemImage: topic.icon)
+                        .tag(topic)
                 }
-                Spacer()
+                .listStyle(.sidebar)
+                .navigationTitle(details.identity.name)
+                .frame(minWidth: 190)
+            } detail: {
+                topicContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
-            .padding(20)
-            ScannerPhotoView(identity: details.identity)
-                .layoutPriority(1)
-                .padding(.horizontal, 20)
-                .padding(.bottom, 16)
-            Divider()
-            Form {
-                ForEach(details.sections) { section in
-                    Section {
-                        ForEach(section.rows) { row in
-                            LabeledContent(row.label) {
-                                Text(row.value).textSelection(.enabled).multilineTextAlignment(.trailing)
-                            }
-                        }
-                    } header: {
-                        Label(section.title, systemImage: section.systemImage)
-                    }
-                }
-            }
-            .formStyle(.grouped)
             Divider()
             HStack {
                 Button {
@@ -51,8 +56,127 @@ struct ScannerDetailsView: View {
             .padding(16)
         }
         // Flexible bounds let the user resize the sheet with the mouse.
-        .frame(minWidth: 520, idealWidth: 640, maxWidth: .infinity, minHeight: 560, idealHeight: 860, maxHeight: .infinity)
+        .frame(minWidth: 880, idealWidth: 960, maxWidth: .infinity, minHeight: 620, idealHeight: 760, maxHeight: .infinity)
         .presentationSizing(.fitted)
+    }
+
+    @ViewBuilder
+    private var topicContent: some View {
+        switch selectedTopic {
+        case .overview: overview
+        case .details: infoTab
+        case .feeding: ScannerFeedSettingsView(identity: details.identity, isSupported: details.supportsFeedSettings)
+        case .diagnostics: ScannerDiagnosticsSettingsView()
+        }
+    }
+
+    private var overview: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 12) {
+                Image(systemName: "scanner").font(.largeTitle).foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(details.identity.name).font(.title2.weight(.semibold))
+                    Text("\(details.identity.manufacturer) · \(details.identity.connectionKind.rawValue)").foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            ScannerPhotoView(identity: details.identity)
+        }
+        .padding(24)
+    }
+
+    private var infoTab: some View {
+        Form {
+            ForEach(details.sections) { section in
+                Section {
+                    ForEach(section.rows) { row in
+                        LabeledContent(row.label) {
+                            Text(row.value).textSelection(.enabled).multilineTextAlignment(.trailing)
+                        }
+                    }
+                } header: {
+                    Label(section.title, systemImage: section.systemImage)
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+/// "Feeding & Sensors" topic: multifeed detection and the pre-scan sensor
+/// check for this scanner. Changes are saved immediately and apply to the
+/// next scan.
+struct ScannerFeedSettingsView: View {
+    let identity: ScannerIdentity
+    let isSupported: Bool
+    private let store = ScannerFeedSettingsStore(defaults: .standard)
+    @State private var settings = ScannerFeedSettings()
+
+    var body: some View {
+        Form {
+            Section {
+                if !isSupported {
+                    Text("This scanner's driver does not support these options; they are used by Fujitsu SCSI-over-USB models such as the S1500 and iX500.")
+                        .font(.callout).foregroundStyle(.orange)
+                }
+                Picker("Multifeed detection", selection: $settings.multifeedDetection) {
+                    ForEach(MultifeedDetection.allCases) { Text($0.label).tag($0) }
+                }
+                Text(settings.multifeedDetection.explanation).font(.caption).foregroundStyle(.secondary)
+            } header: {
+                Label("Multifeed (staples)", systemImage: "doc.on.doc")
+            }
+            .disabled(!isSupported)
+
+            Section {
+                Toggle("Check sensors before scanning", isOn: $settings.checksSensorsBeforeScan)
+                Text("Reads the scanner's status before the first sheet. An open cover, a multifeed or an error left over from a paper jam (orange light) stops the scan with a clear message.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("Paper jams and multifeeds during a scan are always reported with their own message.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } header: {
+                Label("Sensors and paper jam", systemImage: "exclamationmark.triangle")
+            }
+            .disabled(!isSupported)
+        }
+        .formStyle(.grouped)
+        .onAppear {
+            settings = store.load(for: identity)
+        }
+        .onChange(of: settings) { _, newValue in store.save(newValue, for: identity) }
+    }
+}
+
+/// "Diagnostics" topic: the app-wide copy of the activity log to the macOS
+/// system log, so a hung or crashed session can still be read afterwards.
+struct ScannerDiagnosticsSettingsView: View {
+    private let store = ScannerFeedSettingsStore(defaults: .standard)
+    @State private var writesToSystemLog = true
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Copy activity log to the macOS system log", isOn: $writesToSystemLog)
+                Text("Applies to all scanners. Keeps the log after a hang or crash. Read it in Terminal with:")
+                    .font(.caption).foregroundStyle(.secondary)
+                HStack {
+                    Text(ScanSystemLog.terminalCommand).font(.caption.monospaced()).textSelection(.enabled)
+                    Spacer()
+                    Button {
+                        let pasteboard = NSPasteboard.general
+                        pasteboard.clearContents()
+                        pasteboard.setString(ScanSystemLog.terminalCommand, forType: .string)
+                    } label: { Image(systemName: "doc.on.doc") }
+                        .buttonStyle(.borderless)
+                        .help("Copy command")
+                }
+            } header: {
+                Label("Diagnostics", systemImage: "stethoscope")
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { writesToSystemLog = store.writesActivityToSystemLog }
+        .onChange(of: writesToSystemLog) { _, newValue in store.writesActivityToSystemLog = newValue }
     }
 }
 
