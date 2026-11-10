@@ -173,10 +173,13 @@ final class IOKitUSBDeviceTransport: @unchecked Sendable, USBDeviceTransport {
 
     init(identity: ScannerIdentity) {
         self.identity = identity
+        // libusb_exit() can block in darwin_exit() waiting for the hotplug
+        // thread, and it tore the context down under a concurrent abort
+        // (crash 2026-10-20 10:46). One process-wide context avoids both.
+        hostTransport.usesSharedLibUSBContext = true
         if let usbDeviceID = identity.usbDeviceID, EpjitsuScanSnapModelProfile.profile(for: usbDeviceID) == .s1300i {
             hostTransport.clearsEndpointHalts = false
             hostTransport.configuresUnconfiguredDevice = true
-            hostTransport.usesSharedLibUSBContext = true
         }
     }
 
