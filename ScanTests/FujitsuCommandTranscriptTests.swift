@@ -57,6 +57,13 @@ final class FujitsuCommandTranscriptTests: XCTestCase {
 
     static let identity = identity(productID: 0x11a2)
 
+    /// The fixtures were recorded before multifeed detection and the sensor
+    /// check existed; pin the device to that command flow.
+    static func legacyFeed(_ device: ScannerDevice) -> ScannerDevice {
+        (device as? FujitsuScanSnapDevice)?.feedSettingsProvider = { _ in .legacy }
+        return device
+    }
+
     static func identity(productID: UInt16) -> ScannerIdentity {
         ScannerIdentity(
             name: "Scripted ScanSnap", manufacturer: "Fujitsu", model: String(format: "0x%04x", productID), serialNumber: "SCRIPT",
@@ -85,7 +92,7 @@ final class FujitsuCommandTranscriptTests: XCTestCase {
         let transport = FujitsuScriptedTransport(
             identity: identity, pixelWidth: scenario.pixelWidth, pixelHeight: 8, sheets: scenario.sheets, rejectsGammaTable: rejectsGammaTable
         )
-        let device = driver.makeDevice(identity: identity, transport: transport)
+        let device = Self.legacyFeed(driver.makeDevice(identity: identity, transport: transport))
         try await device.open()
         var pages = 0
         do {
@@ -239,7 +246,7 @@ final class FujitsuCommandTranscriptTests: XCTestCase {
     func testValidatedS1500StillAbortsWhenTheGammaTableIsRejected() async throws {
         let scenario = Scenario("s1500-gamma-rejected", source: .adfFront, mode: .color, dpi: 300, sheets: 1)
         let transport = FujitsuScriptedTransport(identity: Self.identity, pixelWidth: scenario.pixelWidth, pixelHeight: 8, sheets: 1, rejectsGammaTable: true)
-        let device = FujitsuScanSnapS1500Driver().makeDevice(identity: Self.identity, transport: transport)
+        let device = Self.legacyFeed(FujitsuScanSnapS1500Driver().makeDevice(identity: Self.identity, transport: transport))
         try await device.open()
         do {
             let stream = try await device.startScan(options: scenario.options)
@@ -261,7 +268,7 @@ final class FujitsuCommandTranscriptTests: XCTestCase {
             temporaryNoDataReadsForFront: 1,
             temporaryNoDataReadsForBack: 1
         )
-        let device = FujitsuScanSnapIX500Driver().makeDevice(identity: Self.identity(productID: 0x132b), transport: transport)
+        let device = Self.legacyFeed(FujitsuScanSnapIX500Driver().makeDevice(identity: Self.identity(productID: 0x132b), transport: transport))
         try await device.open()
 
         var pages = 0
