@@ -8,6 +8,7 @@ Help us expand support! [Click here to submit your scanner report](https://githu
 | Brand & Model | Scanner Status | Hardware Button | Notes |
 | :--- | :--- | :--- | :--- |
 | Fujitsu ScanSnap S1500M | 🟢 Working | 🟢 Working | |
+| Epson Perfection 3170 | 🟢 Working | ⚪ Not tested | Via Image Capture with Epson's ICA driver 5.8.23 |
 
 ## Building
 
