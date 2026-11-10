@@ -14,6 +14,11 @@ final class FujitsuScanSnapDevice: ScannerDevice, ScannerHardwareEventSource {
     private(set) var status: ScannerStatus = .disconnected
     private var isCancelled = false
     private var hardwareEventTask: Task<Void, Never>?
+    /// Paper-feed options for the next scan; reads the scanner details
+    /// dialog's settings unless a test replaces it.
+    var feedSettingsProvider: (ScannerIdentity) -> ScannerFeedSettings = { identity in
+        ScannerFeedSettingsStore(defaults: .standard).load(for: identity)
+    }
 
     var hardwareEventCapabilities: ScannerHardwareEventCapabilities {
         ScannerHardwareEventCapabilities(
@@ -73,7 +78,8 @@ final class FujitsuScanSnapDevice: ScannerDevice, ScannerHardwareEventSource {
         return AsyncThrowingStream { continuation in
             Task {
                 do {
-                    _ = try await commandEngine.scan(options: options, isCancelled: { self.isCancelled }) { frame in
+                    let feedSettings = self.feedSettingsProvider(self.identity)
+                    _ = try await commandEngine.scan(options: options, feedSettings: feedSettings, isCancelled: { self.isCancelled }) { frame in
                         continuation.yield(frame)
                         self.status = .scanning(progress: nil, pagesScanned: frame.pageIndex)
                     }
@@ -287,7 +293,12 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         return FujitsuVitalProductData(bytes: [UInt8](data))
     }
 
-    func scan(options: ScanOptions, isCancelled: @escaping () -> Bool, onPage: @escaping (PageFrame) async throws -> Void) async throws -> Int {
+    func scan(
+        options: ScanOptions,
+        feedSettings: ScannerFeedSettings = ScannerFeedSettings(),
+        isCancelled: @escaping () -> Bool,
+        onPage: @escaping (PageFrame) async throws -> Void
+    ) async throws -> Int {
         let plan = FujitsuScanPlan(options: options, profile: profile)
         isUnresponsive = false
 
@@ -301,7 +312,7 @@ private final class FujitsuSCSIOverUSBCommandEngine {
             await sendDiagnosticPreread(plan: plan)
         }
         try await modeSelectAuto(plan: plan)
-        try await modeSelectDoubleFeedDefault()
+        try await modeSelectDoubleFeed(feedSettings.multifeedDetection)
         try await modeSelectDropoutDefault(tolerateFailure: profile.toleratesModeSelectFailures)
         try await modeSelectBuffer(mode: plan.scannerBuffering ? .on : .off, tolerateFailure: profile.toleratesModeSelectFailures)
         try await setWindow(plan: plan)
@@ -331,6 +342,9 @@ private final class FujitsuSCSIOverUSBCommandEngine {
             var deliveredPageCount = 0
             var sheetNumber = 0
 
+            if feedSettings.checksSensorsBeforeScan {
+                try await checkSensorsBeforeFirstFeed()
+            }
             if profile.checksHopperBeforeFirstFeed {
                 try await ensureHopperHasPaper()
             }
@@ -398,6 +412,10 @@ private final class FujitsuSCSIOverUSBCommandEngine {
                     }
                 }
                 throw error
+            }
+            if feedSettings.checksSensorsBeforeScan, (error as? ScannerError) != .feederEmpty,
+               let status = try? await FujitsuHardwareStatus(bytes: [UInt8](readHardwareStatus())) {
+                ScanTrace.post("Sensors after the failure: \(status.traceDescription)")
             }
             if profile.usesSANECancelFlow {
                 // SANE sends nothing when the batch never started (for example
@@ -608,6 +626,24 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         }
     }
 
+    /// Refuses to feed while `GET HW STATUS` reports an open cover, a pending
+    /// double feed or an error code, so a jam left over from an earlier batch
+    /// is reported clearly instead of failing somewhere in the transfer.
+    private func checkSensorsBeforeFirstFeed() async throws {
+        ScanTrace.post("Command: get hardware status (sensor check).")
+        let status: FujitsuHardwareStatus
+        do {
+            status = FujitsuHardwareStatus(bytes: [UInt8](try await readHardwareStatus()))
+        } catch {
+            ScanTrace.post("Sensor check skipped: \(error.localizedDescription).")
+            return
+        }
+        ScanTrace.post("Sensors: \(status.traceDescription)")
+        if let problem = status.blockingProblem {
+            throw ScannerError.transportUnavailable(problem)
+        }
+    }
+
     func readHardwareStatus() async throws -> Data {
         var command = [UInt8](repeating: 0, count: 10)
         command[0] = 0xc2
@@ -640,8 +676,8 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         }
     }
 
-    private func modeSelectDoubleFeedDefault() async throws {
-        ScanTrace.post("Command: mode select double-feed defaults.")
+    private func modeSelectDoubleFeed(_ detection: MultifeedDetection) async throws {
+        ScanTrace.post("Command: mode select double-feed detection \(detection.label).")
         var command = [UInt8](repeating: 0, count: 6)
         command[0] = 0x15
         command[1] = 0x10
@@ -650,6 +686,7 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         var payload = [UInt8](repeating: 0, count: 12)
         payload[4] = 0x38
         payload[5] = 6
+        payload[6] = detection.modePageFlags
 
         do {
             try await sendSCSICommand(command, output: Data(payload))
@@ -1641,6 +1678,19 @@ private struct FujitsuSenseData {
         senseKey == 0x03 && asc == 0x80 && [0x01, 0x04, 0x07, 0x08].contains(ascq)
     }
 
+    /// User-facing text for the medium errors SANE's `sense_handler()` names.
+    var mediumErrorMessage: String? {
+        guard senseKey == 0x03, asc == 0x80 else { return nil }
+        switch ascq {
+        case 0x01: return "Paper jam. Open the scanner's top cover, remove the paper and check it for staples, then scan again."
+        case 0x02: return "The scanner cover is open. Close it and scan again."
+        case 0x04: return "The scanner rejected an unusual sheet (torn, folded or too thick). Remove it and scan again."
+        case 0x07: return "Multifeed detected: several sheets were pulled in at once, often because of a staple. Remove the staple, separate the sheets and scan again."
+        case 0x08: return "The document feeder is not set up correctly. Check the paper chute and the cover."
+        default: return nil
+        }
+    }
+
     var isCoverOpen: Bool {
         senseKey == 0x03 && asc == 0x80 && ascq == 0x02
     }
@@ -1699,15 +1749,43 @@ private struct FujitsuSCSIStatusError: LocalizedError {
             if sense.isNoDocuments {
                 return "The document feeder is empty."
             }
-            if sense.isPaperJam {
-                return "The scanner reported a paper jam or double feed."
-            }
-            if sense.isCoverOpen {
-                return "The scanner cover is open."
+            if let message = sense.mediumErrorMessage {
+                return message
             }
             return "Scanner reported SCSI status \(statusByte). \(sense.traceDescription)"
         }
         return "Scanner reported SCSI status \(statusByte)."
+    }
+}
+
+/// Decoded `GET HW STATUS` response. Bit positions follow SANE's
+/// `get_GHS_*` macros for Fujitsu scanners.
+nonisolated struct FujitsuHardwareStatus: Equatable, Sendable {
+    let hopperHasPaper: Bool
+    let coverOpen: Bool
+    let doubleFeed: Bool
+    let errorCode: UInt8
+
+    init(bytes: [UInt8]) {
+        let byte3 = bytes.count > 3 ? bytes[3] : 0x80
+        hopperHasPaper = (byte3 & 0x80) == 0
+        coverOpen = (byte3 & 0x20) != 0
+        doubleFeed = bytes.count > 6 && (bytes[6] & 0x01) != 0
+        errorCode = bytes.count > 7 ? bytes[7] : 0
+    }
+
+    /// Why a batch must not start, or nil when the paper path is clear.
+    var blockingProblem: String? {
+        if coverOpen { return "The scanner's top cover is open. Close it and scan again." }
+        if doubleFeed { return "The scanner still reports a multifeed. Open the top cover, remove the sheets and check them for staples." }
+        if errorCode != 0 {
+            return String(format: "The scanner reports error code 0x%02x (orange light). Open the top cover, clear the paper path, close it and scan again.", errorCode)
+        }
+        return nil
+    }
+
+    var traceDescription: String {
+        String(format: "paper %@, cover %@, multifeed %@, error code 0x%02x.", hopperHasPaper ? "yes" : "no", coverOpen ? "open" : "closed", doubleFeed ? "yes" : "no", errorCode)
     }
 }
 
