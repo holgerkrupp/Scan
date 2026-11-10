@@ -3,9 +3,22 @@ import CoreText
 import Foundation
 @preconcurrency import Vision
 
+/// Steps of an export that take long enough to show, reported in order.
+enum ExportProgress: Equatable {
+    /// Vision reads page `page` of `of` for the `{name}` proposal.
+    case readingText(page: Int, of: Int)
+    /// Apple Intelligence proposes the document name from that text.
+    case proposingName
+    /// Page `page` of `of` is written; `recognizingText` when a searchable
+    /// PDF runs Vision on it.
+    case writingPage(page: Int, of: Int, recognizingText: Bool)
+}
+
 final class ScanOutputWriter {
     /// Fills the `{name}` token of the filename template; nil leaves it at the fallback.
     private let nameSuggester: DocumentNameSuggesting?
+    /// Called on the main actor before each long step of `write(pages:)`.
+    var onProgress: ((ExportProgress) -> Void)?
 
     init(nameSuggester: DocumentNameSuggesting? = FoundationModelNameSuggester()) { self.nameSuggester = nameSuggester }
 
@@ -26,11 +39,13 @@ final class ScanOutputWriter {
             let url = uniqueURL(folder: destinationFolder, name: renderName(options.export.filenameTemplate, date: date, name: documentName, page: nil, side: nil), ext: "pdf")
             guard let consumer = CGDataConsumer(url: url as CFURL), let context = CGContext(consumer: consumer, mediaBox: nil, nil) else { throw ScannerError.outputFailed("Could not write PDF to \(url.path).") }
             var count = 0
+            let searchable = options.export.outputFormat == .searchablePDF
             do {
-                for page in pages {
+                for (index, page) in pages.enumerated() {
+                    onProgress?(.writingPage(page: index + 1, of: pages.count, recognizingText: searchable))
                     if let frame = try process(page, options: options) {
                         let image = try decode(frame, quality: options.export.jpegQuality)
-                        let lines = options.export.outputFormat == .searchablePDF ? try await recognizeText(in: image, languages: options.export.ocrLanguages) : []
+                        let lines = searchable ? try await recognizeText(in: image, languages: options.export.ocrLanguages) : []
                         writePDFPage(frame: frame, image: image, lines: lines, context: context)
                         count += 1
                     }
@@ -42,7 +57,8 @@ final class ScanOutputWriter {
         }
 
         var urls: [URL] = []; var count = 0; var bytes: Int64 = 0
-        for page in pages {
+        for (index, page) in pages.enumerated() {
+            onProgress?(.writingPage(page: index + 1, of: pages.count, recognizingText: options.export.outputFormat == .searchablePDF))
             guard let frame = try process(page, options: options) else { continue }
             let ext: String
             switch options.export.outputFormat { case .pdf, .searchablePDF: ext = "pdf"; case .jpeg: ext = "jpg"; case .png: ext = "png"; case .tiff: ext = "tiff" }
@@ -161,11 +177,14 @@ final class ScanOutputWriter {
     private func suggestedName(for template: String, language: OCRLanguage, frames: [() throws -> PageFrame?]) async -> String? {
         guard template.contains("{name}"), let nameSuggester else { return nil }
         var text = ""
-        for frame in frames.prefix(3) {
+        let pagesToRead = min(frames.count, 3)
+        for (index, frame) in frames.prefix(pagesToRead).enumerated() {
+            onProgress?(.readingText(page: index + 1, of: pagesToRead))
             guard let frame = try? frame(), let image = try? decode(frame), let lines = try? await recognizeText(in: image, languages: [language.visionCode]) else { continue }
             text += lines.map(\.text).joined(separator: "\n") + "\n"
             if text.count >= 400 { break }
         }
+        onProgress?(.proposingName)
         return await nameSuggester.suggestName(forText: text)
     }
 
