@@ -11,6 +11,7 @@ struct ScannerDetailsView: View {
         case overview = "Overview"
         case details = "Details"
         case feeding = "Feeding & Sensors"
+        case statistics = "Statistics"
         case diagnostics = "Diagnostics"
 
         var id: Self { self }
@@ -20,6 +21,7 @@ struct ScannerDetailsView: View {
             case .overview: "scanner"
             case .details: "info.circle"
             case .feeding: "doc.on.doc"
+            case .statistics: "chart.bar.xaxis"
             case .diagnostics: "stethoscope"
             }
         }
@@ -66,6 +68,7 @@ struct ScannerDetailsView: View {
         case .overview: overview
         case .details: infoTab
         case .feeding: ScannerFeedSettingsView(identity: details.identity, isSupported: details.supportsFeedSettings)
+        case .statistics: ScannerStatisticsView(identity: details.identity)
         case .diagnostics: ScannerDiagnosticsSettingsView()
         }
     }
