@@ -298,6 +298,9 @@ final class ScannerWorkspaceViewModel {
     var isRunningOCR = false
     /// Set while an export runs its OCR and AI steps; nil otherwise.
     private(set) var postScanActivity: PostScanActivity?
+    /// Scanner of the pages on screen, so an export is counted for it.
+    private var lastScanScannerID: String?
+    private let statisticsStore: ScanStatisticsStore
     var status: ScannerStatus = .disconnected
     /// The scans as delivered, in display order. They stay for the whole
     /// review session so the processing options can be re-applied.
@@ -351,8 +354,8 @@ final class ScannerWorkspaceViewModel {
 
     convenience init() { self.init(discovery: CompositeScannerDiscovery(), registry: .live, outputWriter: ScanOutputWriter(), profileStore: ScanProfileStore(defaults: .standard)) }
 
-    init(discovery: ScannerDiscovery, registry: ScannerDriverRegistry, outputWriter: ScanOutputWriter, profileStore: ScanProfileStore, automaticRefreshDelay: Duration = .seconds(1)) {
-        self.discovery = discovery; self.registry = registry; self.outputWriter = outputWriter; self.profileStore = profileStore; self.automaticRefreshDelay = automaticRefreshDelay
+    init(discovery: ScannerDiscovery, registry: ScannerDriverRegistry, outputWriter: ScanOutputWriter, profileStore: ScanProfileStore, automaticRefreshDelay: Duration = .seconds(1), statisticsStore: ScanStatisticsStore = .shared) {
+        self.discovery = discovery; self.registry = registry; self.outputWriter = outputWriter; self.profileStore = profileStore; self.automaticRefreshDelay = automaticRefreshDelay; self.statisticsStore = statisticsStore
         let hardwareStore = HardwareButtonSettingsStore(defaults: .standard)
         self.hardwareSettingsStore = hardwareStore
         self.hardwareButtonSettings = hardwareStore.load()
@@ -619,6 +622,8 @@ final class ScannerWorkspaceViewModel {
 
         await hardwareCoordinator?.stop()
         isScanning = true; isCancelRequested = false; pagesScanned = 0; lastOutputs = []; lastOutputByteCount = 0; status = .scanning(progress: nil, pagesScanned: 0)
+        let scanStartedAt = Date(); var scanOutcome = ScanRecord.Outcome.completed; var scanFinishedAt: Date?
+        lastScanScannerID = selectedIdentity.id
         resetPages()
         let store = ScanPageStore(); pageStore = store
         let transport: USBDeviceTransport? = selectedIdentity.connectionKind == .usb ? IOKitUSBDeviceTransport(identity: selectedIdentity) : nil
@@ -634,12 +639,14 @@ final class ScannerWorkspaceViewModel {
                 status = .scanning(progress: nil, pagesScanned: rawPages.count)
             }
             status = .idle; log("Received \(rawPages.count) page\(rawPages.count == 1 ? "" : "s").")
+            scanFinishedAt = Date()
             await waitForProcessing()
             if selectedProfile.options.export.automaticallySaveAfterScanning { await saveExport(destinationOverride: destinationOverride) }
         } catch {
-            if isCancelRequested || error is CancellationError || (error as? ScannerError) == .scanCancelled { status = .idle; log("Scan cancelled; retained \(pages.count) partial page\(pages.count == 1 ? "" : "s") for review.") }
-            else { status = .error(error.localizedDescription); log("Scan failed: \(error.localizedDescription)") }
+            if isCancelRequested || error is CancellationError || (error as? ScannerError) == .scanCancelled { scanOutcome = .cancelled; status = .idle; log("Scan cancelled; retained \(pages.count) partial page\(pages.count == 1 ? "" : "s") for review.") }
+            else { scanOutcome = (error as? ScannerError) == .feederEmpty && rawPages.isEmpty ? .cancelled : .failed; status = .error(error.localizedDescription); log("Scan failed: \(error.localizedDescription)") }
         }
+        statisticsStore.append(ScanRecord(date: scanStartedAt, scannerID: selectedIdentity.id, kind: .scan, pages: rawPages.count, blankPages: hiddenBlankPageCount, duration: (scanFinishedAt ?? Date()).timeIntervalSince(scanStartedAt), outcome: scanOutcome))
         await device.close()
         // Clear the scan state before restarting, as restartHardwareMonitoring() skips the restart while isScanning is true.
         activeDevice = nil; isScanning = false
@@ -686,7 +693,8 @@ final class ScannerWorkspaceViewModel {
         let startedAt = Date()
         outputWriter.onProgress = { [weak self] progress in self?.postScanActivity = .step(progress, startedAt: startedAt) }
         defer { outputWriter.onProgress = nil; postScanActivity = nil }
-        do { let result = try await outputWriter.write(pages: pages, options: selectedProfile.options, destinationFolder: destinationOverride ?? destinationFolder, ocrLanguage: ocrSettings.language); lastOutputs = result.outputURLs; lastOutputByteCount = result.outputByteCount; status = .idle; log("Exported \(result.pagesScanned) page\(result.pagesScanned == 1 ? "" : "s") (\(ByteCountFormatter.string(fromByteCount: result.outputByteCount, countStyle: .file)))."); await runOCRmyPDFIfEnabled(on: result.outputURLs, startedAt: startedAt) }
+        do { let result = try await outputWriter.write(pages: pages, options: selectedProfile.options, destinationFolder: destinationOverride ?? destinationFolder, ocrLanguage: ocrSettings.language); lastOutputs = result.outputURLs; lastOutputByteCount = result.outputByteCount; status = .idle; log("Exported \(result.pagesScanned) page\(result.pagesScanned == 1 ? "" : "s") (\(ByteCountFormatter.string(fromByteCount: result.outputByteCount, countStyle: .file)))."); await runOCRmyPDFIfEnabled(on: result.outputURLs, startedAt: startedAt)
+            statisticsStore.append(ScanRecord(date: Date(), scannerID: lastScanScannerID ?? selectedIdentity?.id ?? "unknown", kind: .export, pages: result.pagesScanned, files: result.outputURLs.count, bytes: lastOutputByteCount)) }
         catch { status = .error(error.localizedDescription); log("Export failed: \(error.localizedDescription)") }
     }
 
