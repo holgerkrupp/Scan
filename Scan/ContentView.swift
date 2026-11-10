@@ -20,6 +20,7 @@ struct ContentView: View {
                 Divider()
                 inspector
             }
+            .navigationSubtitle(viewModel.aiFilenameSubtitle ?? "")
         }
         .task { await viewModel.refreshDevices() }
         .onReceive(NotificationCenter.default.publisher(for: .scanShowDocumentation)) { _ in

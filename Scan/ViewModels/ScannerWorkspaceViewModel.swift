@@ -647,6 +647,15 @@ final class ScannerWorkspaceViewModel {
         return ScanJobResult(outputURLs: lastOutputs, pagesScanned: pages.count, outputByteCount: lastOutputByteCount)
     }
 
+    /// The exported filename shown next to the window title, but only when
+    /// Apple Intelligence filled the template's `{name}` token.
+    var aiFilenameSubtitle: String? {
+        guard selectedProfile.options.export.filenameTemplate.contains("{name}"),
+              FoundationModelNameSuggester.unavailableReason == nil,
+              let first = lastOutputs.first else { return nil }
+        return lastOutputs.count > 1 ? "\(first.lastPathComponent) (+\(lastOutputs.count - 1))" : first.lastPathComponent
+    }
+
     func cancelScan() async {
         guard isScanning else { return }; isCancelRequested = true; await activeDevice?.cancel(); activeDevice = nil; status = .idle; isScanning = false; log("Scan cancellation requested; partial pages are retained.")
     }
