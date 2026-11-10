@@ -55,10 +55,17 @@ enum ScanImageProcessor {
         let inkRatio: Double
     }
 
-    /// Luminance samples on a grid of about 200x200 points inside the page,
-    /// with the paper level and the fraction darker than `paperLevel - inkContrast`.
+    /// Width the page is sampled at for ink statistics. Book type on a
+    /// flatbed has strokes of one to three pixels at 300 dpi; shrinking the
+    /// page to 400 pixels averaged them into paper, so whole pages of text
+    /// counted as blank. A 300 dpi A4 page is read at full resolution, larger
+    /// scans are halved at most, which also bounds the memory used.
+    static let inkSampleWidth = 2600
+
+    /// Luminance of the page inside a 3 percent margin, with the paper level
+    /// and the fraction darker than `paperLevel - inkContrast`.
     static func inkStatistics(_ image: CGImage, inkContrast: Int = 90) -> InkStatistics {
-        guard let sample = PageAlignment.downsampledGray(image, maxWidth: 400) else {
+        guard let sample = PageAlignment.downsampledGray(image, maxWidth: inkSampleWidth) else {
             return InkStatistics(samples: 0, paperLevel: 255, inkRatio: 0)
         }
         let insetX = sample.width * 3 / 100, insetY = sample.height * 3 / 100

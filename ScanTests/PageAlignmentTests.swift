@@ -134,6 +134,24 @@ final class PageAlignmentTests: XCTestCase {
         XCTAssertGreaterThan(stats.inkRatio, 0.002)
     }
 
+    /// A book page on a flatbed: small type with strokes of one or two pixels
+    /// at 300 dpi on a full A4 scan. Sampling at 400 pixels wide averaged the
+    /// strokes into the paper and dropped such pages as blank.
+    func testFineBookTypeOnAFullFlatbedScanIsNotBlank() {
+        let width = 2550, height = 3510
+        let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        context.setFillColor(CGColor(gray: 246.0 / 255.0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        // 25 lines of "letters": 2-pixel strokes, 3 pixels apart, in the gray of printed type.
+        context.setFillColor(CGColor(gray: 0.45, alpha: 1))
+        for line in 0..<25 {
+            for x in stride(from: 600, to: 1800, by: 5) { context.fill(CGRect(x: x, y: 1000 + line * 50, width: 2, height: 24)) }
+        }
+        let page = context.makeImage()!
+        XCTAssertFalse(ScanImageProcessor.isBlank(page))
+        XCTAssertGreaterThan(ScanImageProcessor.inkStatistics(page).inkRatio, 0.002)
+    }
+
     func testWhitenPaperStretchesGrayPaperToWhiteAndLeavesPhotosAlone() throws {
         func canvas(gray: CGFloat, ink: Bool) -> CGImage {
             let context = CGContext(data: nil, width: 400, height: 500, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
