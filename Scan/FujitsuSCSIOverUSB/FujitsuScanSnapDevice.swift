@@ -91,9 +91,25 @@ final class FujitsuScanSnapDevice: ScannerDevice, ScannerHardwareEventSource {
             Task {
                 do {
                     let feedSettings = self.feedSettingsProvider(self.identity)
-                    _ = try await commandEngine.scan(options: options, feedSettings: feedSettings, isCancelled: { self.isCancelled }) { frame in
-                        continuation.yield(frame)
-                        self.status = .scanning(progress: nil, pagesScanned: frame.pageIndex)
+                    var settlingRetries = 0
+                    while true {
+                        do {
+                            _ = try await commandEngine.scan(options: options, feedSettings: feedSettings, isCancelled: { self.isCancelled }) { frame in
+                                continuation.yield(frame)
+                                self.status = .scanning(progress: nil, pagesScanned: frame.pageIndex)
+                            }
+                            break
+                        } catch let error as FujitsuSCSIStatusError
+                            where error.isCoverOpen && !commandEngine.lastBatchStarted && settlingRetries < 3 && !self.isCancelled {
+                            // A sheet inserted moments before the scan (typical for the
+                            // hardware button) is not picked up: the feed returns at once
+                            // and START SCAN reports a cover that is open for ~100 ms.
+                            // Scanning again once the sensor settles succeeds, which is
+                            // what a second button press used to do.
+                            settlingRetries += 1
+                            ScanTrace.post("First feed reported a briefly open cover; retry \(settlingRetries) of 3 once the paper path settles.")
+                            guard try await commandEngine.waitForClosedCover() else { throw error }
+                        }
                     }
                     guard !self.isCancelled else { throw ScannerError.scanCancelled }
                     self.status = .idle
@@ -259,9 +275,28 @@ private final class FujitsuSCSIOverUSBCommandEngine {
     /// end-of-medium sense, which is how JPEG transfers signal their end.
     private var lastReadHitEndOfMedium = false
 
+    /// Whether the last `scan` call got past its first START SCAN.
+    private(set) var lastBatchStarted = false
+
     init(transport: USBDeviceTransport, profile: FujitsuScanSnapModelProfile) {
         self.transport = transport
         self.profile = profile
+    }
+
+    /// Polls `GET HW STATUS` until the cover sensor reads closed, then lets the
+    /// freshly inserted sheet settle. Returns false if the cover stays open.
+    func waitForClosedCover(timeout: TimeInterval = 3, settle: UInt64 = 250_000_000) async throws -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            guard let raw = try? await readHardwareStatus() else { continue }
+            if !FujitsuHardwareStatus(bytes: [UInt8](raw)).coverOpen {
+                try await Task.sleep(nanoseconds: settle)
+                return true
+            }
+        }
+        ScanTrace.post("The cover still reads open; not retrying.")
+        return false
     }
 
     func waitUntilReady() async throws {
@@ -313,6 +348,7 @@ private final class FujitsuSCSIOverUSBCommandEngine {
     ) async throws -> Int {
         let plan = FujitsuScanPlan(options: options, profile: profile)
         isUnresponsive = false
+        lastBatchStarted = false
 
         ScanTrace.post("Preparing \(plan.traceDescription).")
         do {
@@ -361,6 +397,7 @@ private final class FujitsuSCSIOverUSBCommandEngine {
                 try await ensureHopperHasPaper()
             }
 
+            var refeedAttempts = 0
             while sheetNumber < 500 {
                 if isCancelled() {
                     throw ScannerError.scanCancelled
@@ -381,8 +418,20 @@ private final class FujitsuSCSIOverUSBCommandEngine {
                     break
                 }
 
-                try await startScan(plan: plan)
+                do {
+                    try await startScan(plan: plan)
+                } catch let error as FujitsuSCSIStatusError
+                    where error.isCoverOpen && !batchStarted && refeedAttempts < 5 && !isCancelled() {
+                    // A sheet inserted moments ago was not picked up and the cover
+                    // sensor reads open for ~100 ms. Feed again as soon as it
+                    // closes, without halting, so the motor keeps going.
+                    refeedAttempts += 1
+                    ScanTrace.post("First sheet was not picked up yet; feeding again (attempt \(refeedAttempts)).")
+                    guard try await waitForClosedCover(settle: 0) else { throw error }
+                    continue
+                }
                 batchStarted = true
+                lastBatchStarted = true
                 let rawImages = try await readSheet(plan: plan, isCancelled: isCancelled)
                 sheetNumber += 1
                 ScanTrace.post("Finished transferring sheet \(sheetNumber).")
@@ -1754,6 +1803,10 @@ private struct FujitsuSCSIStatusError: LocalizedError {
 
     var isUnsupportedCommand: Bool {
         sense?.isIllegalRequestInvalidField == true
+    }
+
+    var isCoverOpen: Bool {
+        sense?.isCoverOpen == true
     }
 
     var errorDescription: String? {
