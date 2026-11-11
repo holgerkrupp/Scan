@@ -616,7 +616,9 @@ final class ScannerWorkspaceViewModel {
         }
     }
 
-    func startScan(destinationOverride: URL? = nil) async {
+    /// `alwaysExport` is set by automations (hardware button, Shortcuts), which
+    /// must produce files even when the profile does not save automatically.
+    func startScan(destinationOverride: URL? = nil, alwaysExport: Bool = false) async {
         guard let selectedIdentity else { status = .error("Select a scanner before scanning."); return }
         guard let driver = registry.driver(for: selectedIdentity) else { status = .error("No driver is available for \(selectedIdentity.name). This device is discovered but unsupported."); return }
 
@@ -641,16 +643,41 @@ final class ScannerWorkspaceViewModel {
             status = .idle; log("Received \(rawPages.count) page\(rawPages.count == 1 ? "" : "s").")
             scanFinishedAt = Date()
             await waitForProcessing()
-            if selectedProfile.options.export.automaticallySaveAfterScanning { await saveExport(destinationOverride: destinationOverride) }
+            if alwaysExport || selectedProfile.options.export.automaticallySaveAfterScanning { await saveExport(destinationOverride: destinationOverride) }
         } catch {
             if isCancelRequested || error is CancellationError || (error as? ScannerError) == .scanCancelled { scanOutcome = .cancelled; status = .idle; log("Scan cancelled; retained \(pages.count) partial page\(pages.count == 1 ? "" : "s") for review.") }
-            else { scanOutcome = (error as? ScannerError) == .feederEmpty && rawPages.isEmpty ? .cancelled : .failed; status = .error(error.localizedDescription); log("Scan failed: \(error.localizedDescription)") }
+            else {
+                scanOutcome = (error as? ScannerError) == .feederEmpty && rawPages.isEmpty ? .cancelled : .failed
+                log("Scan failed: \(error.localizedDescription)")
+                scanFinishedAt = Date()
+                await savePagesBeforeFailure(error: error, destinationOverride: destinationOverride, alwaysExport: alwaysExport)
+            }
         }
         statisticsStore.append(ScanRecord(date: scanStartedAt, scannerID: selectedIdentity.id, kind: .scan, pages: rawPages.count, blankPages: hiddenBlankPageCount, duration: (scanFinishedAt ?? Date()).timeIntervalSince(scanStartedAt), outcome: scanOutcome))
         await device.close()
         // Clear the scan state before restarting, as restartHardwareMonitoring() skips the restart while isScanning is true.
         activeDevice = nil; isScanning = false
         await restartHardwareMonitoring()
+    }
+
+    /// A jam or multifeed ends the batch, but the sheets transferred before it
+    /// are complete: save them like a finished scan (processing, export, OCR)
+    /// so a background one-touch scan does not lose them on the next press.
+    private func savePagesBeforeFailure(error: Error, destinationOverride: URL?, alwaysExport: Bool) async {
+        let message = error.localizedDescription
+        guard !rawPages.isEmpty, alwaysExport || selectedProfile.options.export.automaticallySaveAfterScanning else {
+            status = .error(message)
+            return
+        }
+        await waitForProcessing()
+        await saveExport(destinationOverride: destinationOverride)
+        if lastOutputs.isEmpty {
+            status = .error(message)
+        } else {
+            let saved = "\(pages.count) page\(pages.count == 1 ? "" : "s") scanned before the failure \(pages.count == 1 ? "was" : "were") saved to \(lastOutputs.first?.lastPathComponent ?? "the destination")."
+            log(saved)
+            status = .error("\(message) \(saved)")
+        }
     }
 
     /// Runs the selected profile as a complete, export-producing job for an
@@ -668,7 +695,7 @@ final class ScannerWorkspaceViewModel {
         else { await refreshDevices() }
         guard selectedIdentity != nil else { throw ScannerError.deviceNotFound }
 
-        await startScan(destinationOverride: destinationOverride)
+        await startScan(destinationOverride: destinationOverride, alwaysExport: true)
         if isCancelRequested { throw ScannerError.scanCancelled }
         if case let .error(message) = status { throw ScannerError.outputFailed(message) }
         guard !pages.isEmpty else { throw ScannerError.feederEmpty }
