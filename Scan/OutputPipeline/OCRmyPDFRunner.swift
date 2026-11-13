@@ -41,6 +41,20 @@ nonisolated struct OCRSettings: Codable, Equatable, Sendable {
     var language: OCRLanguage = .german
     /// Runs the `ocrmypdf` command-line tool on every exported PDF.
     var runOCRmyPDF = true
+    /// For `{person}`: one per line, `Shown name = text to find, other text`.
+    var people = ""
+
+    init(language: OCRLanguage = .german, runOCRmyPDF: Bool = true, people: String = "") {
+        self.language = language; self.runOCRmyPDF = runOCRmyPDF; self.people = people
+    }
+
+    // Settings saved before a field existed must keep decoding.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        language = try container.decodeIfPresent(OCRLanguage.self, forKey: .language) ?? .german
+        runOCRmyPDF = try container.decodeIfPresent(Bool.self, forKey: .runOCRmyPDF) ?? true
+        people = try container.decodeIfPresent(String.self, forKey: .people) ?? ""
+    }
 }
 
 struct OCRSettingsStore {

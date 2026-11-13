@@ -5,36 +5,52 @@ import Foundation
 
 /// Steps of an export that take long enough to show, reported in order.
 enum ExportProgress: Equatable {
-    /// Vision reads page `page` of `of` for the `{name}` proposal.
+    /// Vision reads page `page` of `of` for the document tokens of the filename.
     case readingText(page: Int, of: Int)
-    /// Apple Intelligence proposes the document name from that text.
+    /// Apple Intelligence proposes the document name and fields from that text.
     case proposingName
     /// Page `page` of `of` is written; `recognizingText` when a searchable
     /// PDF runs Vision on it.
     case writingPage(page: Int, of: Int, recognizingText: Bool)
 }
 
+/// What the document tokens of a filename are filled with.
+struct DocumentNaming: Sendable {
+    /// `{name}`; nil leaves it at `DocumentName.fallback`.
+    var name: String?
+    /// `{docdate}`, `{sender}`, `{type}`, `{subject}` and `{person}`.
+    var metadata: DocumentMetadata?
+}
+
 final class ScanOutputWriter {
+    /// The tokens filled by `DocumentAnalysis` rather than by the name suggester.
+    static let analysisTokens = ["{docdate}", "{sender}", "{type}", "{subject}", "{person}"]
     /// Fills the `{name}` token of the filename template; nil leaves it at the fallback.
     private let nameSuggester: DocumentNameSuggesting?
+    /// Fills the sender, type and subject; the date and person need no model.
+    private let documentModel: DocumentModel
     /// Called on the main actor before each long step of `write(pages:)`.
     var onProgress: ((ExportProgress) -> Void)?
 
-    init(nameSuggester: DocumentNameSuggesting? = FoundationModelNameSuggester()) { self.nameSuggester = nameSuggester }
+    init(nameSuggester: DocumentNameSuggesting? = FoundationModelNameSuggester(), documentModel: DocumentModel = AppleIntelligenceDocumentModel()) {
+        self.nameSuggester = nameSuggester
+        self.documentModel = documentModel
+    }
 
-    func write(frames: [PageFrame], options: ScanOptions, destinationFolder: URL, ocrLanguage: OCRLanguage = .german) async throws -> ScanJobResult {
+    /// `people` is the list `{person}` is chosen from, one person per line.
+    func write(frames: [PageFrame], options: ScanOptions, destinationFolder: URL, ocrLanguage: OCRLanguage = .german, people: String = "") async throws -> ScanJobResult {
         let processed = try frames.compactMap { try ScanImageProcessor.process($0, settings: options.processing, outputDPI: options.export.outputDPI) }
-        return try await writeProcessed(processed, options: options, destinationFolder: destinationFolder, ocrLanguage: ocrLanguage)
+        return try await writeProcessed(processed, options: options, destinationFolder: destinationFolder, ocrLanguage: ocrLanguage, people: people)
     }
 
     /// File-backed pages are read one at a time, so large feeder batches do not
     /// stay resident. This is the workspace's path: the pages are already
     /// processed renditions, so only the output resolution and compression are
     /// applied here and the export matches what the grid shows.
-    func write(pages: [StoredPage], options: ScanOptions, destinationFolder: URL, ocrLanguage: OCRLanguage = .german) async throws -> ScanJobResult {
+    func write(pages: [StoredPage], options: ScanOptions, destinationFolder: URL, ocrLanguage: OCRLanguage = .german, people: String = "") async throws -> ScanJobResult {
         try FileManager.default.createDirectory(at: destinationFolder, withIntermediateDirectories: true)
         let date = Self.dateFormatter.string(from: Date())
-        let documentName = await suggestedName(for: options.export.filenameTemplate, language: ocrLanguage, frames: pages.map { page in { try self.process(page, options: options) } })
+        let documentName = await documentNaming(for: options.export.filenameTemplate, language: ocrLanguage, people: people, frames: pages.map { page in { try self.process(page, options: options) } })
         if (options.export.outputFormat == .pdf || options.export.outputFormat == .searchablePDF) && options.export.exportMode == .combinedPDF {
             let url = uniqueURL(folder: destinationFolder, name: renderName(options.export.filenameTemplate, date: date, name: documentName, page: nil, side: nil), ext: "pdf")
             guard let consumer = CGDataConsumer(url: url as CFURL), let context = CGContext(consumer: consumer, mediaBox: nil, nil) else { throw ScannerError.outputFailed("Could not write PDF to \(url.path).") }
@@ -89,11 +105,11 @@ final class ScanOutputWriter {
         return image
     }
 
-    private func writeProcessed(_ frames: [PageFrame], options: ScanOptions, destinationFolder: URL, ocrLanguage: OCRLanguage) async throws -> ScanJobResult {
+    private func writeProcessed(_ frames: [PageFrame], options: ScanOptions, destinationFolder: URL, ocrLanguage: OCRLanguage, people: String) async throws -> ScanJobResult {
         guard !frames.isEmpty else { throw ScannerError.outputFailed("No non-blank pages were received from the scanner.") }
         try FileManager.default.createDirectory(at: destinationFolder, withIntermediateDirectories: true)
         let date = Self.dateFormatter.string(from: Date())
-        let documentName = await suggestedName(for: options.export.filenameTemplate, language: ocrLanguage, frames: frames.map { frame in { frame } })
+        let documentName = await documentNaming(for: options.export.filenameTemplate, language: ocrLanguage, people: people, frames: frames.map { frame in { frame } })
         if (options.export.outputFormat == .pdf || options.export.outputFormat == .searchablePDF) && options.export.exportMode == .combinedPDF {
             let url = uniqueURL(folder: destinationFolder, name: renderName(options.export.filenameTemplate, date: date, name: documentName, page: nil, side: nil), ext: "pdf")
             try await writePDF(frames: frames, to: url, searchable: options.export.outputFormat == .searchablePDF, options: options)
@@ -172,27 +188,44 @@ final class ScanOutputWriter {
         context.restoreGState()
     }
 
-    /// One name for the whole batch, proposed from the text Vision reads on
-    /// the first pages. Only runs when the template asks for `{name}`; any
-    /// failure yields nil so the export itself is never held up.
-    private func suggestedName(for template: String, language: OCRLanguage, frames: [() throws -> PageFrame?]) async -> String? {
-        guard template.contains("{name}"), let nameSuggester else { return nil }
-        var text = ""
+    /// The document tokens for the whole batch, from the text Vision reads on
+    /// the first pages. Only runs for the tokens the template asks for; any
+    /// failure leaves them empty so the export itself is never held up.
+    private func documentNaming(for template: String, language: OCRLanguage, people: String, frames: [() throws -> PageFrame?]) async -> DocumentNaming {
+        let wantsName = template.contains("{name}") && nameSuggester != nil
+        let wantsAnalysis = Self.analysisTokens.contains(where: template.contains)
+        guard wantsName || wantsAnalysis else { return DocumentNaming() }
+        var pageTexts: [String] = []
         let pagesToRead = min(frames.count, 3)
         for (index, frame) in frames.prefix(pagesToRead).enumerated() {
             onProgress?(.readingText(page: index + 1, of: pagesToRead))
             guard let frame = try? frame(), let image = try? decode(frame), let lines = try? await recognizeText(in: image, languages: [language.visionCode]) else { continue }
-            text += lines.map(\.text).joined(separator: "\n") + "\n"
-            if text.count >= 400 { break }
+            pageTexts.append(lines.map(\.text).joined(separator: "\n"))
+            // {name} only needs the start; the document's date can be further down.
+            if !wantsAnalysis, pageTexts.joined().count >= 400 { break }
         }
         onProgress?(.proposingName)
-        return await nameSuggester.suggestName(forText: text)
+        var naming = DocumentNaming()
+        if wantsName { naming.name = await nameSuggester?.suggestName(forText: pageTexts.joined(separator: "\n")) }
+        // Pages are separated by form feeds, so the first page's dates count more.
+        if wantsAnalysis { naming.metadata = await DocumentAnalysis.analyze(text: pageTexts.joined(separator: "\u{c}"), scanDate: Date(), people: people, model: documentModel) }
+        return naming
     }
 
-    private func renderName(_ template: String, date: String, name: String?, page: Int?, side: String?) -> String {
-        let value = template.replacingOccurrences(of: "{date}", with: date).replacingOccurrences(of: "{name}", with: name ?? DocumentName.fallback).replacingOccurrences(of: "{time}", with: Self.timeFormatter.string(from: Date())).replacingOccurrences(of: "{page}", with: page.map { String(format: "%03d", $0) } ?? "batch").replacingOccurrences(of: "{side}", with: side ?? "all")
-        let safe = value.components(separatedBy: CharacterSet(charactersIn: "/:\\?%*|\"<>\n\r")).joined(separator: "-").trimmingCharacters(in: .whitespacesAndNewlines)
+    static func renderName(_ template: String, date: String, time: String, naming: DocumentNaming, page: Int?, side: String?) -> String {
+        let metadata = naming.metadata ?? DocumentMetadata()
+        var value = template
+        for (token, text) in [("{date}", date), ("{time}", time), ("{name}", naming.name ?? DocumentName.fallback), ("{docdate}", metadata.date.isEmpty ? date : metadata.date), ("{sender}", metadata.sender), ("{type}", metadata.type), ("{subject}", metadata.subject), ("{person}", metadata.person), ("{page}", page.map { String(format: "%03d", $0) } ?? "batch"), ("{side}", side ?? "all")] {
+            value = value.replacingOccurrences(of: token, with: text)
+        }
+        // A token that stayed empty must not leave doubled separators behind.
+        value = value.replacing(/\ {2,}/, with: " ").replacing(/-{2,}/, with: "-").replacing(/_{2,}/, with: "_")
+        let safe = value.components(separatedBy: CharacterSet(charactersIn: "/:\\?%*|\"<>\n\r")).joined(separator: "-").trimmingCharacters(in: CharacterSet(charactersIn: " -_.").union(.whitespacesAndNewlines))
         return safe.isEmpty ? "Scan" : safe
+    }
+
+    private func renderName(_ template: String, date: String, name: DocumentNaming, page: Int?, side: String?) -> String {
+        Self.renderName(template, date: date, time: Self.timeFormatter.string(from: Date()), naming: name, page: page, side: side)
     }
     private func uniqueURL(folder: URL, name: String, ext: String) -> URL { var url = folder.appendingPathComponent("\(name).\(ext)"); var counter = 2; while FileManager.default.fileExists(atPath: url.path) { url = folder.appendingPathComponent("\(name)-\(counter).\(ext)"); counter += 1 }; return url }
     private func fileSize(_ url: URL) -> Int64 { (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0 }
