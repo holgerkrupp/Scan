@@ -154,7 +154,7 @@ struct ScannerFeedSettingsView: View {
 /// system log, so a hung or crashed session can still be read afterwards.
 struct ScannerDiagnosticsSettingsView: View {
     private let store = ScannerFeedSettingsStore(defaults: .standard)
-    @State private var writesToSystemLog = true
+    @State private var writesToSystemLog = false
 
     var body: some View {
         Form {
