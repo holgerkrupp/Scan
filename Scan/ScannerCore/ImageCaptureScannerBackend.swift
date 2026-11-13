@@ -309,7 +309,11 @@ final class ImageCaptureScannerDevice: NSObject, ScannerDevice, ScannerHardwareE
         guard let continuation = selectionContinuation else { return }
         selectionContinuation = nil
         if let error { continuation.resume(throwing: error) }
-        else { continuation.resume(returning: functionalUnit) }
+        else {
+            // ImageCaptureCore hands the unit over and does not touch it afterwards.
+            nonisolated(unsafe) let unit = functionalUnit
+            continuation.resume(returning: unit)
+        }
     }
 
     func scannerDeviceDidBecomeAvailable(_ scanner: ICScannerDevice) { status = .idle }

@@ -37,7 +37,7 @@ import XCTest
 /// An empty feeder is reported as a successful "pre-scan flow" run; every other
 /// error fails the test. The full command trace is printed and written next to
 /// the pages.
-final class FujitsuScanSnapHardwareTests: XCTestCase {
+@MainActor final class FujitsuScanSnapHardwareTests: XCTestCase {
     private final class TraceCollector: @unchecked Sendable {
         private let lock = NSLock()
         private var lines: [String] = []

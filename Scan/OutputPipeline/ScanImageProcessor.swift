@@ -2,7 +2,7 @@ import AppKit
 import CoreImage
 import Foundation
 
-struct ProcessedPage: Sendable {
+nonisolated struct ProcessedPage: Sendable {
     let frame: PageFrame
     let image: CGImage
 }

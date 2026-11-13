@@ -7,7 +7,7 @@ import Foundation
 /// per-model profiles are explicit), but the hardware harness dumps it so a
 /// new model's capabilities (A/D width, resolutions, JPEG, buffer memory,
 /// supported commands) can be checked against its profile.
-struct FujitsuVitalProductData: Sendable, Equatable {
+nonisolated struct FujitsuVitalProductData: Sendable, Equatable {
     let bytes: [UInt8]
 
     init(bytes: [UInt8]) {

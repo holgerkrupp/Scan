@@ -8,7 +8,7 @@ import Foundation
 /// `fujitsu` backend documents in `init_model()`. Each quirk is an explicit
 /// flag here so that the validated S1500 path is not changed by accident when
 /// another model is added.
-struct FujitsuScanSnapModelProfile: Sendable {
+nonisolated struct FujitsuScanSnapModelProfile: Sendable {
     let name: String
     let usbDeviceIDs: Set<USBDeviceID>
     let capabilities: ScannerCapabilities

@@ -22,7 +22,7 @@ final class USBScannerDiscovery: ScannerDiscovery {
 /// Watches the IORegistry for USB devices of the given vendors being attached
 /// or detached. Notifications are delivered on the main queue.
 final class USBDeviceMonitor {
-    private let port: IONotificationPortRef
+    nonisolated(unsafe) private let port: IONotificationPortRef
     private var iterators: [io_iterator_t] = []
     private let onChange: @MainActor () -> Void
 
@@ -166,7 +166,7 @@ struct USBDeviceEnumerator {
     }
 }
 
-final class IOKitUSBDeviceTransport: @unchecked Sendable, USBDeviceTransport {
+nonisolated final class IOKitUSBDeviceTransport: @unchecked Sendable, USBDeviceTransport {
     let identity: ScannerIdentity
     private let hostTransport = ScanUSBHostTransport()
     private let ioQueue = DispatchQueue(label: "de.holgerkrupp.Scan.usb-transport", qos: .userInitiated)

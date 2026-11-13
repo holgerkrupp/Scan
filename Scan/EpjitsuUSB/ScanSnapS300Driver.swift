@@ -5,7 +5,7 @@ import Foundation
 ///
 /// This is an independent Swift implementation of the observable bootstrap
 /// protocol. Fujitsu firmware is copyrighted and is never bundled here.
-enum EpjitsuHardwareButtonInterpretation: Equatable, Sendable {
+nonisolated enum EpjitsuHardwareButtonInterpretation: Equatable, Sendable {
     case s300Byte1Bit0
     case unvalidated
 }
@@ -13,7 +13,7 @@ enum EpjitsuHardwareButtonInterpretation: Equatable, Sendable {
 /// Model data belongs here rather than in the protocol engine. That keeps the
 /// common bootstrap/status path ready for additional epjitsu models without
 /// making the engine guess from a display name.
-struct EpjitsuScanSnapModelProfile: Equatable, Sendable {
+nonisolated struct EpjitsuScanSnapModelProfile: Equatable, Sendable {
     let name: String
     let usbDeviceIDs: Set<USBDeviceID>
     let expectedFirmwareFileNames: [String]
@@ -110,7 +110,7 @@ struct EpjitsuScanSnapModelProfile: Equatable, Sendable {
 }
 
 /// Native, direct-bulk USB support for the epjitsu ScanSnap family.
-struct EpjitsuScanSnapDriver: ScannerDriver {
+nonisolated struct EpjitsuScanSnapDriver: ScannerDriver {
     let name = "Fujitsu ScanSnap epjitsu direct USB (experimental)"
     let supportedUSBDeviceIDs: Set<USBDeviceID> = Set(EpjitsuScanSnapModelProfile.all.flatMap(\.usbDeviceIDs))
 
@@ -327,7 +327,7 @@ final class EpjitsuScanSnapDevice: ScannerDevice, ScannerHardwareEventSource {
     }
 }
 
-struct EpjitsuProtocolIdentity: Equatable {
+nonisolated struct EpjitsuProtocolIdentity: Equatable {
     let vendor: String
     let model: String
 }
@@ -529,7 +529,7 @@ private struct EpjitsuPageRasterizer {
 }
 
 final class EpjitsuCommandEngine {
-    static let firmwarePayloadLength = 0x10000
+    nonisolated static let firmwarePayloadLength = 0x10000
 
     let transport: USBDeviceTransport
     let profile: EpjitsuScanSnapModelProfile
@@ -815,7 +815,7 @@ final class EpjitsuCommandEngine {
     }
 }
 
-struct EpjitsuScanSnapFirmwareStore {
+nonisolated struct EpjitsuScanSnapFirmwareStore {
     static let legacyS300BookmarkKey = "scan.scansnapS300FirmwareBookmark"
     static let expectedFileNames = EpjitsuScanSnapModelProfile.all.flatMap(\.expectedFirmwareFileNames)
 

@@ -36,7 +36,7 @@ nonisolated enum OCRLanguage: String, CaseIterable, Identifiable, Codable, Senda
 }
 
 /// App-wide OCR preferences from the Settings window's Language section.
-struct OCRSettings: Codable, Equatable, Sendable {
+nonisolated struct OCRSettings: Codable, Equatable, Sendable {
     /// Default OCR language; German unless the user picks another.
     var language: OCRLanguage = .german
     /// Runs the `ocrmypdf` command-line tool on every exported PDF.

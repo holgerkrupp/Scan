@@ -4,7 +4,7 @@ import XCTest
 
 /// Covers `FujitsuScanSnapImageDecoder.finishHardwareJPEG`, the step that turns
 /// a scanner-produced colour JPEG into the requested output mode.
-final class FujitsuHardwareJPEGConversionTests: XCTestCase {
+@MainActor final class FujitsuHardwareJPEGConversionTests: XCTestCase {
     private let width = 64
     private let height = 32
     private let darkRGB: (UInt8, UInt8, UInt8) = (20, 30, 40)
