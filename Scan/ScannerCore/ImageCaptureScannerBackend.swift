@@ -110,14 +110,17 @@ final class ImageCaptureScannerDiscovery: NSObject, ScannerDiscovery, ICDeviceBr
 final class CompositeScannerDiscovery: ScannerDiscovery {
     private let native: ScannerDiscovery
     private let imageCapture: ScannerDiscovery
-    init(native: ScannerDiscovery = USBScannerDiscovery(), imageCapture: ScannerDiscovery = ImageCaptureScannerDiscovery.shared) { self.native = native; self.imageCapture = imageCapture }
+    private let wifi: ScannerDiscovery?
+    init(native: ScannerDiscovery = USBScannerDiscovery(), imageCapture: ScannerDiscovery = ImageCaptureScannerDiscovery.shared, wifi: ScannerDiscovery? = nil) { self.native = native; self.imageCapture = imageCapture; self.wifi = wifi }
     func observeChanges(_ onChange: @escaping @MainActor () -> Void) {
         native.observeChanges(onChange)
         imageCapture.observeChanges(onChange)
+        wifi?.observeChanges(onChange)
     }
     func discover() async -> [ScannerIdentity] {
+        let wifiDevices = Task { await wifi?.discover() ?? [] }
         let (nativeDevices, imageCaptureDevices) = await (native.discover(), imageCapture.discover())
-        var result = nativeDevices
+        var result = await nativeDevices + wifiDevices.value
         for candidate in imageCaptureDevices {
             let duplicate = result.contains { existing in
                 if let a = existing.usbDeviceID, let b = candidate.usbDeviceID, a == b { return existing.serialNumber == candidate.serialNumber || existing.locationID == candidate.locationID || (existing.serialNumber == nil && candidate.serialNumber == nil && existing.locationID == nil && candidate.locationID == nil) }

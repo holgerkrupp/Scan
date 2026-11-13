@@ -12,7 +12,7 @@ nonisolated struct USBDeviceID: Hashable, Sendable, Codable {
     var displayString: String { String(format: "0x%04x/0x%04x", vendorID, productID) }
 }
 
-enum ScannerConnectionKind: String, Sendable, Codable { case usb = "USB"; case imageCapture = "Image Capture" }
+enum ScannerConnectionKind: String, Sendable, Codable { case usb = "USB"; case imageCapture = "Image Capture"; case wifi = "Wi-Fi" }
 
 struct ScannerIdentity: Identifiable, Hashable, Sendable, Codable {
     let name: String

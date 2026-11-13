@@ -358,6 +358,7 @@
 					/usr/local/opt/libusb/include,
 				);
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Scan communicates with your ScanSnap scanner over the local network.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -401,6 +402,7 @@
 					/usr/local/opt/libusb/include,
 				);
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Scan communicates with your ScanSnap scanner over the local network.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

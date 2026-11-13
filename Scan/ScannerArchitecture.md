@@ -184,6 +184,10 @@ invented.
 
 Devices discovered without a matching driver remain visible as “Discovered, unsupported”; they are never silently treated as ScanSnap devices.
 
+## Wi-Fi backend (ScanSnap iX500)
+
+`WiFiTransport/` reimplements the scanner's network protocol ("VENS") without any ScanSnap software: UDP discovery and notices (button, lid), a TCP control channel for registration and the presence heartbeat, and a TCP channel carrying the same SCSI commands as USB. `VENSProtocol.swift` holds the wire format as pure functions, `VENSNetwork.swift` the sockets, and `FujitsuScanSnapWiFiDriver.swift` the discovery, the driver and the device. Discovery also probes the last known addresses directly, because the macOS firewall can drop answers to a broadcast. The scanner must already list the Mac among its registered computers; registering it is not implemented. When the heartbeat goes unanswered for 10 seconds outside a scan, the device opens a new socket and registers again. The release at the end of a transfer goes on a new connection, after the scan connection has closed: the scanner does not answer it otherwise. Sources: the protocol description of ScanSnack (github.com/elte0/scansnack, `docs/protocol-ix500.md`, MIT) and exchanges with a real iX500.
+
 ## Adding another native driver
 
 1. For another Fujitsu SCSI-over-USB model, add a `FujitsuScanSnapModelProfile` with its quirk flags and a thin `ScannerDriver` that hands the profile to `FujitsuScanSnapDevice`. Start from SANE's `init_model()` notes and the scanner's VPD page (`testDumpVitalProductData` in the hardware harness), then try the flags on hardware with the `SCAN_HW_*` profile experiments before committing them to the profile. For a different protocol, add a scanner-specific `ScannerDriver` and `ScannerDevice` implementation.

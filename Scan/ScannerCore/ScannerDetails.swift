@@ -143,7 +143,7 @@ extension ScannerDriverRegistry {
             hardwareEvents: (device as? ScannerHardwareEventSource)?.hardwareEventCapabilities,
             usbRegistryProperties: usbRegistryProperties
         )
-        details.supportsFeedSettings = device is FujitsuScanSnapDevice
+        details.supportsFeedSettings = device is FujitsuScanSnapDevice || device is FujitsuScanSnapWiFiDevice
         return details
     }
 }
