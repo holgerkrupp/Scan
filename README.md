@@ -44,6 +44,22 @@ Intelligence the token becomes `Scan`. The default template is now
 `21-48-00`; profiles still on the previous default are moved over once, and
 templates you wrote yourself are kept.
 
+The template also knows `{docdate}`, `{sender}`, `{type}`, `{subject}` and
+`{person}`, for names such as `{docdate} {sender} {type} {subject}`:
+
+- `{docdate}` is the date the document was written. The dates in its text are
+  scored: one after a place ("Berlin, den …", "Lyon, le …", "Madrid, a …") or
+  a label such as "Rechnungsdatum" wins, due dates, birth dates and periods
+  are set aside. It works in all the OCR languages (German, English, French,
+  Spanish, Italian, Dutch, Portuguese, Polish) and with Japanese dates. When
+  no date qualifies, it is the scan date.
+- `{sender}`, `{type}` and `{subject}` are read by Apple Intelligence on the
+  Mac. Only words that are written in the document are kept, so a model
+  that invents a word cannot put it in a file name. Without Apple
+  Intelligence they stay empty.
+- `{person}` is the first entry of the **People** list (Settings ▸ Language)
+  whose name appears in the text, e.g. `Anna = Anna Schmidt, Schmidt Anna`.
+
 **Destination.** The inspector's **Destination** section shows the folder
 scans are saved to, with **Choose…**, **Show** and **Reset**. The choice is
 kept across launches as a security-scoped bookmark.

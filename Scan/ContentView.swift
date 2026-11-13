@@ -257,10 +257,14 @@ struct ContentView: View {
                         }
                     }
                 }
-                TextField("Filename template", text: profileString(\.options.export.filenameTemplate)); Text("Tokens: {date}, {time}, {name}, {page}, {side}").font(.caption).foregroundStyle(.secondary)
+                TextField("Filename template", text: profileString(\.options.export.filenameTemplate)); Text("Tokens: {date}, {time}, {name}, {docdate}, {sender}, {type}, {subject}, {person}, {page}, {side}").font(.caption).foregroundStyle(.secondary)
                 if viewModel.selectedProfile.options.export.filenameTemplate.contains("{name}") {
                     if let reason = FoundationModelNameSuggester.unavailableReason { Text("\(reason) {name} becomes \"\(DocumentName.fallback)\".").font(.caption).foregroundStyle(.orange) }
                     else { Text("{name} is proposed on this Mac by Apple Intelligence from the text of the first pages.").font(.caption).foregroundStyle(.secondary) }
+                }
+                if ScanOutputWriter.analysisTokens.contains(where: viewModel.selectedProfile.options.export.filenameTemplate.contains) {
+                    if let reason = FoundationModelNameSuggester.unavailableReason { Text("\(reason) {sender}, {type} and {subject} stay empty; {docdate} and {person} still work.").font(.caption).foregroundStyle(.orange) }
+                    else { Text("{sender}, {type} and {subject} are read on this Mac by Apple Intelligence, using only words written in the document. {docdate} is the date the document was written, or the scan date. {person} comes from the people list in Settings ▸ Language.").font(.caption).foregroundStyle(.secondary) }
                 }
                 Toggle("Automatically save after scanning", isOn: profile(\.options.export.automaticallySaveAfterScanning))
             }

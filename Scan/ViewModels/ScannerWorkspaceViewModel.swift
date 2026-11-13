@@ -731,7 +731,7 @@ final class ScannerWorkspaceViewModel {
         let startedAt = Date()
         outputWriter.onProgress = { [weak self] progress in self?.postScanActivity = .step(progress, startedAt: startedAt) }
         defer { outputWriter.onProgress = nil; postScanActivity = nil }
-        do { let result = try await outputWriter.write(pages: pages, options: selectedProfile.options, destinationFolder: destinationOverride ?? destinationFolder, ocrLanguage: ocrSettings.language); lastOutputs = result.outputURLs; lastOutputByteCount = result.outputByteCount; status = .idle; log("Exported \(result.pagesScanned) page\(result.pagesScanned == 1 ? "" : "s") (\(ByteCountFormatter.string(fromByteCount: result.outputByteCount, countStyle: .file)))."); await runOCRmyPDFIfEnabled(on: result.outputURLs, startedAt: startedAt)
+        do { let result = try await outputWriter.write(pages: pages, options: selectedProfile.options, destinationFolder: destinationOverride ?? destinationFolder, ocrLanguage: ocrSettings.language, people: ocrSettings.people); lastOutputs = result.outputURLs; lastOutputByteCount = result.outputByteCount; status = .idle; log("Exported \(result.pagesScanned) page\(result.pagesScanned == 1 ? "" : "s") (\(ByteCountFormatter.string(fromByteCount: result.outputByteCount, countStyle: .file)))."); await runOCRmyPDFIfEnabled(on: result.outputURLs, startedAt: startedAt)
             statisticsStore.append(ScanRecord(date: Date(), scannerID: lastScanScannerID ?? selectedIdentity?.id ?? "unknown", kind: .export, pages: result.pagesScanned, files: result.outputURLs.count, bytes: lastOutputByteCount)) }
         catch { status = .error(error.localizedDescription); log("Export failed: \(error.localizedDescription)") }
     }

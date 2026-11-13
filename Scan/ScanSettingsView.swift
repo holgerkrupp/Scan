@@ -41,6 +41,14 @@ struct ScanSettingsView: View {
                 Text(ocrmypdfStatus)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                LabeledContent("People") {
+                    TextEditor(text: $viewModel.ocrSettings.people)
+                        .font(.body.monospaced())
+                        .frame(minHeight: 60)
+                }
+                Text("For the {person} token of the filename template: one person per line, for example Anna = Anna Schmidt, Schmidt Anna. If the document contains \u{201C}Anna Schmidt\u{201D} or \u{201C}Schmidt Anna\u{201D}, \u{201C}Anna\u{201D} is added to the file name.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Hardware Button / One-Touch Scan") {
