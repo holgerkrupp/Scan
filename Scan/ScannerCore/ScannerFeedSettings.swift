@@ -95,10 +95,12 @@ struct ScannerFeedSettingsStore {
         defaults.set(data, forKey: keyPrefix + identity.id)
     }
 
-    /// Copy every activity-log line to the macOS unified log (default on), so
-    /// a hung or crashed session can be read afterwards with `log show`.
+    /// Copy every activity-log line to the macOS unified log, so a hung or
+    /// crashed session can be read afterwards with `log show`. Off by default:
+    /// the lines carry file and folder names, and an AI-named file is named
+    /// after words from the document.
     var writesActivityToSystemLog: Bool {
-        get { defaults.object(forKey: systemLogKey) as? Bool ?? true }
+        get { defaults.object(forKey: systemLogKey) as? Bool ?? false }
         nonmutating set { defaults.set(newValue, forKey: systemLogKey) }
     }
 }
