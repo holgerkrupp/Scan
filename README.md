@@ -112,7 +112,7 @@ Otherwise Vision's document segmentation supplies the outline, cropped to the
 largest rectangle inside the straightened sheet minus a small margin; and
 when neither finds the sheet, the tilt is estimated from the content (the
 angle at which the rows of dark pixels line up best). A cropped sheet within
-1.5% of a standard size (A3 to A6, Letter, Legal) is set on that size
+2.5% of a standard size (A3 to A6, Letter, Legal) is set on that size
 exactly, as ScanSnap Manager does. A document fed in Fujitsu's carrier sheet
 is recognised by the carrier's black band and row of blocks and cropped out
 of it.

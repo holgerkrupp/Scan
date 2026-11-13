@@ -131,6 +131,16 @@ import XCTest
         XCTAssertEqual(fittedLandscape.width, 3508); XCTAssertEqual(fittedLandscape.height, 2480)
         let receipt = syntheticScan(canvas: CGSize(width: 900, height: 2400), pageSize: CGSize(width: 900, height: 2400), degrees: 0, background: 1)
         XCTAssertNil(ScanImageProcessor.fitToStandardPaper(receipt, dpi: 300))
+        // A sheet that turned while it was fed comes out sheared, about 2% too long.
+        let sheared = syntheticScan(canvas: CGSize(width: 2464, height: 3582), pageSize: CGSize(width: 2464, height: 3582), degrees: 0, background: 1)
+        let fittedSheared = try XCTUnwrap(ScanImageProcessor.fitToStandardPaper(sheared, dpi: 300))
+        XCTAssertEqual(fittedSheared.width, 2480); XCTAssertEqual(fittedSheared.height, 3508)
+        // Letter stays Letter, and a sheet 4% off any size is left alone.
+        let letter = syntheticScan(canvas: CGSize(width: 2550, height: 3300), pageSize: CGSize(width: 2550, height: 3300), degrees: 0, background: 1)
+        let fittedLetter = try XCTUnwrap(ScanImageProcessor.fitToStandardPaper(letter, dpi: 300))
+        XCTAssertEqual(fittedLetter.width, 2550); XCTAssertEqual(fittedLetter.height, 3300)
+        let between = syntheticScan(canvas: CGSize(width: 2480, height: 3650), pageSize: CGSize(width: 2480, height: 3650), degrees: 0, background: 1)
+        XCTAssertNil(ScanImageProcessor.fitToStandardPaper(between, dpi: 300))
     }
 
     func testContentSkewEstimateMatchesTheRotation() {
