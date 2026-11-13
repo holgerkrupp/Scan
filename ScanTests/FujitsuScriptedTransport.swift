@@ -31,6 +31,13 @@ final class FujitsuScriptedTransport: USBDeviceTransport, @unchecked Sendable {
     /// Answer `SEND` of the gamma table (data type 0x83) with ILLEGAL REQUEST,
     /// like a scanner whose A/D width does not match the table size.
     private let rejectsGammaTable: Bool
+    /// Feeds that return without picking the sheet, after which SCAN fails
+    /// with "cover open" (03/80/02): the iX500 with a sheet inserted moments ago.
+    var unpickedFeeds = 0
+    /// Sheet number whose image read ends in a paper jam (03/80/01).
+    var jamsOnSheet: Int?
+    private var unpickedFeedPending = false
+    private var fedSheets = 0
 
     init(identity: ScannerIdentity, pixelWidth: Int, pixelHeight: Int, sheets: Int, rejectsGammaTable: Bool = false, temporaryNoDataReadsForFront: Int = 0, temporaryNoDataReadsForBack: Int = 0) {
         self.identity = identity
@@ -130,13 +137,22 @@ final class FujitsuScriptedTransport: USBDeviceTransport, @unchecked Sendable {
             awaitingPayloadBytes = Self.int(cdb, 3, 2)
         case 0x1b: // SCAN
             awaitingPayloadBytes = Int(cdb[4])
+            if unpickedFeedPending {
+                unpickedFeedPending = false
+                pendingStatus = 2
+                pendingSense = (0x03, 0x80, 0x02)
+            }
         case 0x31: // OBJECT POSITION
             if cdb[1] & 0x07 == 0x01 {
-                if sheetsRemaining == 0 {
+                if unpickedFeeds > 0, sheetsRemaining > 0 {
+                    unpickedFeeds -= 1
+                    unpickedFeedPending = true
+                } else if sheetsRemaining == 0 {
                     pendingStatus = 2
                     pendingSense = (0x03, 0x80, 0x03)
                 } else {
                     sheetsRemaining -= 1
+                    fedSheets += 1
                     imageRemaining = [false: bytesPerLine * pixelHeight, true: bytesPerLine * pixelHeight]
                 }
             }
@@ -158,6 +174,11 @@ final class FujitsuScriptedTransport: USBDeviceTransport, @unchecked Sendable {
                     shouldReturnTemporaryNoData = true
                 } else {
                     shouldReturnTemporaryNoData = false
+                }
+                if fedSheets == jamsOnSheet {
+                    pendingStatus = 2
+                    pendingSense = (0x03, 0x80, 0x01)
+                    return
                 }
                 if shouldReturnTemporaryNoData {
                     pendingStatus = 2
