@@ -192,6 +192,25 @@ final class ScanCoreTests: XCTestCase {
         options.export.exportMode = .separateFiles; let second = try await writer.write(frames: [frames[0]], options: options, destinationFolder: folder); XCTAssertEqual(second.outputURLs.count, 1); XCTAssertNotEqual(first.outputURLs[0].lastPathComponent, second.outputURLs[0].lastPathComponent)
     }
 
+    func testPagesAreGroupedBySheet() {
+        let sides: [PageSide] = [.front, .back, .front, .front, .back, .back]
+        XCTAssertEqual(ScanOutputWriter.sheets(Array(sides.indices), side: { sides[$0] }), [[0, 1], [2], [3, 4], [5]])
+    }
+
+    func testOneFilePerSheetKeepsEachSheetsSidesTogether() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("ScanTests-\(UUID().uuidString)"); defer { try? FileManager.default.removeItem(at: folder) }
+        let sides: [PageSide] = [.front, .back, .front, .front, .back]
+        let frames = try sides.enumerated().map { index, side in
+            let frame = try makeFrame(pageIndex: index + 1, blank: false)
+            return PageFrame(pageIndex: frame.pageIndex, side: side, pixelFormat: frame.pixelFormat, width: frame.width, height: frame.height, resolutionDPI: frame.resolutionDPI, data: frame.data)
+        }
+        let options = ScanOptions(export: ExportSettings(outputFormat: .pdf, exportMode: .separateSheets, filenameTemplate: "Sheet-{page}-{side}"))
+        let result = try await ScanOutputWriter(nameSuggester: nil).write(frames: frames, options: options, destinationFolder: folder)
+        XCTAssertEqual(result.pagesScanned, 5)
+        XCTAssertEqual(result.outputURLs.map(\.lastPathComponent), ["Sheet-001-all.pdf", "Sheet-002-front.pdf", "Sheet-003-all.pdf"])
+        XCTAssertEqual(result.outputURLs.map { CGPDFDocument($0 as CFURL)?.numberOfPages }, [2, 1, 2])
+    }
+
     func testCompositeDiscoveryDeduplicatesNativeS1500InFavorOfNative() async {
         let native = ScannerIdentity(name: "Native S1500", manufacturer: "Fujitsu", model: "S1500", serialNumber: "S1", connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x11a2), locationID: 7)
         let imageCaptureDuplicate = ScannerIdentity(name: "Image Capture S1500", manufacturer: "macOS", model: "S1500", serialNumber: "S1", connectionKind: .imageCapture, usbDeviceID: native.usbDeviceID, locationID: 7, persistentID: "ic-s1")
