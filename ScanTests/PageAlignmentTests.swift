@@ -1,18 +1,24 @@
 import CoreGraphics
+import ImageIO
 import XCTest
 @testable import Scan
 
-final class PageAlignmentTests: XCTestCase {
+@MainActor final class PageAlignmentTests: XCTestCase {
     /// A light-gray canvas with a white sheet of `pageSize`, rotated by
     /// `degrees` (counter-clockwise, Core Graphics convention), carrying
     /// black "text" bars.
-    private func syntheticScan(canvas: CGSize, pageSize: CGSize, degrees: Double, background: CGFloat = 0.82) -> CGImage {
+    private func syntheticScan(canvas: CGSize, pageSize: CGSize, degrees: Double, background: CGFloat = 0.82, edgeShadow: Bool = false) -> CGImage {
         let context = CGContext(data: nil, width: Int(canvas.width), height: Int(canvas.height), bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
         context.setFillColor(CGColor(gray: background, alpha: 1))
         context.fill(CGRect(origin: .zero, size: canvas))
         context.translateBy(x: canvas.width / 2, y: canvas.height / 2)
         context.rotate(by: degrees * .pi / 180)
         context.translateBy(x: -pageSize.width / 2, y: -pageSize.height / 2)
+        if edgeShadow {
+            context.setStrokeColor(CGColor(gray: 0.75, alpha: 1))
+            context.setLineWidth(8)
+            context.stroke(CGRect(origin: .zero, size: pageSize).insetBy(dx: -4, dy: -4))
+        }
         context.setFillColor(CGColor(gray: 1, alpha: 1))
         context.fill(CGRect(origin: .zero, size: pageSize))
         context.setFillColor(CGColor(gray: 0, alpha: 1))
@@ -49,8 +55,82 @@ final class PageAlignmentTests: XCTestCase {
         let image = syntheticScan(canvas: CGSize(width: 1200, height: 1600), pageSize: CGSize(width: 1000, height: 1400), degrees: 0)
         let result = try XCTUnwrap(PageAlignment.align(image))
         XCTAssertEqual(result.angleDegrees, 0, accuracy: 0.3)
-        XCTAssertEqual(result.image.width, 1000 - 2 * 6, accuracy: 4)
-        XCTAssertEqual(result.image.height, 1400 - 2 * 6, accuracy: 4)
+        // The whole sheet, less the measurement's precision on each side.
+        XCTAssertEqual(result.image.width, 1000 - 2 * 2, accuracy: 4)
+        XCTAssertEqual(result.image.height, 1400 - 2 * 2, accuracy: 4)
+    }
+
+    /// An A4 sheet covers more than 90% of the full-width scan, so Vision's
+    /// outline looks like the scan's own frame; the edges found in the
+    /// margins (light gray backing, shadow along the sheet) still crop it.
+    func testSheetCoveringMostOfTheScanIsCroppedToItsEdges() throws {
+        let image = syntheticScan(canvas: CGSize(width: 1040, height: 1460), pageSize: CGSize(width: 1010, height: 1420), degrees: 0.6, background: 0.93, edgeShadow: true)
+        let result = try XCTUnwrap(PageAlignment.align(image))
+        XCTAssertTrue(result.usedPageOutline)
+        XCTAssertEqual(result.angleDegrees, 0.6, accuracy: 0.3)
+        // The sheet's own size, less the measurement's precision and the rotation loss.
+        XCTAssertLessThanOrEqual(result.image.width, 1010)
+        XCTAssertGreaterThan(result.image.width, 990)
+        XCTAssertLessThanOrEqual(result.image.height, 1420)
+        XCTAssertGreaterThan(result.image.height, 1400)
+        for (x, y) in [(1, 1), (result.image.width - 2, 1), (1, result.image.height - 2), (result.image.width - 2, result.image.height - 2)] {
+            XCTAssertGreaterThan(gray(result.image, x: x, y: y), 245, "corner \(x),\(y)")
+        }
+    }
+
+    /// A receipt runs the scan's length but lies far from its sides: it is
+    /// cropped to its own edges, with no backing left on either side.
+    func testNarrowReceiptIsCroppedToItsEdges() throws {
+        let image = syntheticScan(canvas: CGSize(width: 1300, height: 1560), pageSize: CGSize(width: 460, height: 1500), degrees: 0.8, background: 0.93, edgeShadow: true)
+        let result = try XCTUnwrap(PageAlignment.align(image))
+        XCTAssertEqual(result.angleDegrees, 0.8, accuracy: 0.3)
+        XCTAssertEqual(result.image.width, 460, accuracy: 10)
+        XCTAssertEqual(result.image.height, 1500, accuracy: 10)
+        for (x, y) in [(1, 1), (result.image.width - 2, 1), (1, result.image.height - 2), (result.image.width - 2, result.image.height - 2)] {
+            XCTAssertGreaterThan(gray(result.image, x: x, y: y), 245, "corner \(x),\(y)")
+        }
+    }
+
+    /// A document in Fujitsu's carrier sheet comes out without the carrier:
+    /// not its black band and blocks, its seams, or the empty, printed pocket
+    /// below the document.
+    func testDocumentInACarrierSheetIsCroppedOutOfIt() throws {
+        let size = CGSize(width: 1040, height: 1700)
+        let context = CGContext(data: nil, width: Int(size.width), height: Int(size.height), bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        // Rectangles given top-down.
+        func fill(_ gray: CGFloat, _ x: CGFloat, _ y: CGFloat, _ width: CGFloat, _ height: CGFloat) {
+            context.setFillColor(CGColor(gray: gray, alpha: 1))
+            context.fill(CGRect(x: x, y: size.height - y - height, width: width, height: height))
+        }
+        fill(0.93, 0, 0, size.width, size.height)
+        fill(0.88, 10, 20, 1020, 1660)
+        fill(0.78, 10, 20, 15, 1660); fill(0.78, 1015, 20, 15, 1660); fill(0.78, 10, 1665, 1020, 15)
+        for x in stride(from: 40, to: 1000, by: 40) { fill(0, CGFloat(x), 60, 20, 20) }
+        fill(0, 25, 100, 990, 20)
+        fill(1, 25, 120, 990, 1330)
+        for y in stride(from: 200, to: 1400, by: 30) { fill(0, 120, CGFloat(y), 800, 6) }
+        fill(0.5, 25, 1450, 990, 12)
+        for x in stride(from: 60, to: 360, by: 60) { fill(0, CGFloat(x), 1550, 30, 50) }
+        let result = try XCTUnwrap(PageAlignment.align(context.makeImage()!))
+        XCTAssertEqual(result.image.width, 990, accuracy: 12)
+        XCTAssertEqual(result.image.height, 1330 - 10, accuracy: 15)
+        for (x, y) in [(2, 2), (result.image.width - 3, 2), (2, result.image.height - 3), (result.image.width - 3, result.image.height - 3)] {
+            XCTAssertGreaterThan(gray(result.image, x: x, y: y), 240, "corner \(x),\(y)")
+        }
+    }
+
+    /// A sheet measured a few pixels off A4 comes out exactly A4, either way
+    /// round; a receipt keeps its own size.
+    func testSheetsNearAStandardSizeAreSetOnIt() throws {
+        let a4 = syntheticScan(canvas: CGSize(width: 2463, height: 3515), pageSize: CGSize(width: 2463, height: 3515), degrees: 0, background: 1)
+        let fitted = try XCTUnwrap(ScanImageProcessor.fitToStandardPaper(a4, dpi: 300))
+        XCTAssertEqual(fitted.width, 2480); XCTAssertEqual(fitted.height, 3508)
+        XCTAssertGreaterThan(gray(fitted, x: 2, y: 2), 245, "padding takes the paper level")
+        let landscape = syntheticScan(canvas: CGSize(width: 3500, height: 2470), pageSize: CGSize(width: 3500, height: 2470), degrees: 0, background: 1)
+        let fittedLandscape = try XCTUnwrap(ScanImageProcessor.fitToStandardPaper(landscape, dpi: 300))
+        XCTAssertEqual(fittedLandscape.width, 3508); XCTAssertEqual(fittedLandscape.height, 2480)
+        let receipt = syntheticScan(canvas: CGSize(width: 900, height: 2400), pageSize: CGSize(width: 900, height: 2400), degrees: 0, background: 1)
+        XCTAssertNil(ScanImageProcessor.fitToStandardPaper(receipt, dpi: 300))
     }
 
     func testContentSkewEstimateMatchesTheRotation() {
@@ -211,9 +291,18 @@ final class PageAlignmentTests: XCTestCase {
             var line = String(format: "%@: %dx%d, paper %d (whitened %d), ink %.3f%% -> %@", name, image.width, image.height, ink.paperLevel, whitened, ink.inkRatio * 100, ScanImageProcessor.isBlank(image) ? "BLANK" : "content")
             if let outline { line += String(format: ", outline tilt %.2f° area %.0f%%", outline.tiltRadians * 180 / .pi, outline.area * 100 / CGFloat(image.width * image.height)) } else { line += ", no outline" }
             if let content { line += String(format: ", content tilt %.2f°", content * 180 / .pi) } else { line += ", no content tilt" }
+            if let edges = PageAlignment.detectSheetEdges(in: image) {
+                line += String(format: ", %d sheet edges tilt %.2f°", edges.sides, edges.tilt * 180 / .pi) + edges.quad.corners.map { String(format: " (%.0f,%.0f)", $0.x, $0.y) }.joined()
+            }
             if let result {
                 line += String(format: " -> %.2f° via %@, %dx%d, %.2fs", result.angleDegrees, result.usedPageOutline ? "outline" : "content", result.image.width, result.image.height, elapsed)
-                try ScanImageProcessor.encodeJPEG(result.image, quality: 0.85).write(to: URL(fileURLWithPath: output).appendingPathComponent(name))
+                var final = result.image
+                let dpi = (CGImageSourceCreateWithURL(url as CFURL, nil).flatMap { CGImageSourceCopyPropertiesAtIndex($0, 0, nil) as? [CFString: Any] }?[kCGImagePropertyDPIWidth] as? Double) ?? 300
+                if result.usedPageOutline, let fitted = ScanImageProcessor.fitToStandardPaper(final, dpi: dpi) {
+                    final = fitted
+                    line += String(format: ", standard size %dx%d", fitted.width, fitted.height)
+                }
+                try ScanImageProcessor.encodeJPEG(final, quality: 0.85).write(to: URL(fileURLWithPath: output).appendingPathComponent(name))
             } else {
                 line += " -> no alignment"
             }
