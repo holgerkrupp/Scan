@@ -633,7 +633,7 @@ final class ScannerWorkspaceViewModel {
             capabilities = device.capabilities
             reconcileProfile(using: device.capabilities)
             if let transport { log("Opened USB pipes: \(await transport.endpointSummary).") }
-            let stream = try await device.startScan(options: selectedProfile.options)
+            let stream = try await device.startScan(options: selectedProfile.options.forScanner)
             for try await frame in stream {
                 try await ingest(frame)
                 status = .scanning(progress: nil, pagesScanned: rawPages.count)
@@ -846,13 +846,14 @@ final class ScannerWorkspaceViewModel {
     private func processPage(_ raw: RawPage) {
         guard let store = pageStore else { return }
         let settings = effectiveProcessingSettings(for: raw.id)
+        let automaticColor = selectedProfile.options.acquisition.colorMode == .automatic
         let generation = processingGeneration
         pendingProcessingCount += 1
         let previous = processingChain
         processingChain = Task { [weak self] in
             await previous?.value
             let outcome = await Task.detached(priority: .utility) { () -> Result<PageFrame?, Error> in
-                Result { try Self.render(raw, settings: settings) }
+                Result { try Self.render(raw, settings: settings, automaticColor: automaticColor) }
             }.value
             guard let self else { return }
             self.pendingProcessingCount = max(0, self.pendingProcessingCount - 1)
@@ -877,9 +878,9 @@ final class ScannerWorkspaceViewModel {
         }
     }
 
-    nonisolated private static func render(_ raw: RawPage, settings: ImageProcessingSettings) throws -> PageFrame? {
+    nonisolated private static func render(_ raw: RawPage, settings: ImageProcessingSettings, automaticColor: Bool) throws -> PageFrame? {
         let frame = try raw.frame()
-        return try ScanImageProcessor.process(frame, settings: settings, outputDPI: frame.resolutionDPI)
+        return try ScanImageProcessor.process(frame, settings: settings, outputDPI: frame.resolutionDPI, automaticColor: automaticColor)
     }
 
     /// Keeps a page selected while pages appear and disappear.
@@ -908,7 +909,7 @@ final class ScannerWorkspaceViewModel {
         if let capabilities { return capabilities.sources.contains(source) }
         return selectedIdentity?.connectionKind == .imageCapture && source != .adfBack
     }
-    func isSupported(_ mode: ScanColorMode) -> Bool { capabilities?.colorModes.contains(mode) ?? (selectedIdentity?.connectionKind == .imageCapture) }
+    func isSupported(_ mode: ScanColorMode) -> Bool { capabilities?.supports(mode) ?? (selectedIdentity?.connectionKind == .imageCapture) }
     func isSupported(_ dpi: Int) -> Bool { capabilities?.resolutions(for: selectedProfile.options.source).contains(dpi) ?? (selectedIdentity?.connectionKind == .imageCapture) }
     func isSupported(_ format: ScanOutputFormat) -> Bool { capabilities?.outputFormats.contains(format) ?? (selectedIdentity?.connectionKind == .imageCapture) }
 

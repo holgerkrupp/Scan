@@ -5,6 +5,47 @@ import XCTest
 
 @MainActor
 final class ScanCoreTests: XCTestCase {
+    func testAutomaticColorScansInColorAndKeepsColorOnlyWhereThereIsSome() throws {
+        var options = ScanOptions()
+        options.acquisition.colorMode = .automatic; options.acquisition.source = .adfFront
+        XCTAssertEqual(options.forScanner.acquisition.colorMode, .color)
+        let colorOnly = ScannerCapabilities(sources: [.adfFront], colorModes: [.color], resolutionsDPI: [300], supportsDuplex: false)
+        XCTAssertTrue(colorOnly.supports(.automatic))
+        XCTAssertNoThrow(try colorOnly.validate(options))
+        XCTAssertFalse(ScannerCapabilities(sources: [.adfFront], colorModes: [.gray], resolutionsDPI: [300], supportsDuplex: false).supports(.automatic))
+
+        func page(_ draw: (CGContext) -> Void) -> CGImage {
+            let context = CGContext(data: nil, width: 1240, height: 1754, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 1240, height: 1754))
+            draw(context)
+            return context.makeImage()!
+        }
+        let text = page { context in
+            context.setFillColor(CGColor(red: 0.2, green: 0.2, blue: 0.21, alpha: 1))
+            context.fill(CGRect(x: 100, y: 300, width: 1000, height: 400))
+        }
+        // A small pale stamp is enough to keep the page in color.
+        let stamp = page { context in
+            context.setFillColor(CGColor(red: 0.75, green: 0.85, blue: 1, alpha: 1))
+            context.fill(CGRect(x: 100, y: 300, width: 60, height: 60))
+        }
+        XCTAssertFalse(ScanImageProcessor.hasColor(text))
+        XCTAssertTrue(ScanImageProcessor.hasColor(stamp))
+
+        func processed(_ image: CGImage) throws -> CGImage {
+            let data = NSMutableData()
+            let destination = try XCTUnwrap(CGImageDestinationCreateWithData(data, "public.jpeg" as CFString, 1, nil))
+            CGImageDestinationAddImage(destination, image, nil)
+            XCTAssertTrue(CGImageDestinationFinalize(destination))
+            let frame = PageFrame(pageIndex: 1, side: .front, pixelFormat: .jpeg, width: image.width, height: image.height, resolutionDPI: 150, data: data as Data)
+            let result = try XCTUnwrap(ScanImageProcessor.process(frame, settings: ImageProcessingSettings(), outputDPI: 150, automaticColor: true))
+            return try XCTUnwrap(NSImage(data: result.data)?.cgImage(forProposedRect: nil, context: nil, hints: nil))
+        }
+        XCTAssertEqual(try processed(text).colorSpace?.model, .monochrome)
+        XCTAssertEqual(try processed(stamp).colorSpace?.model, .rgb)
+    }
+
     func testSizePresetMappingIsDocumentedAndStable() {
         XCTAssertEqual(ScanFileSizePreset.small.documentedMapping.outputDPI, 150)
         XCTAssertEqual(ScanFileSizePreset.small.documentedMapping.colorMode, .gray)

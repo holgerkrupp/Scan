@@ -82,7 +82,7 @@ struct ScanDocumentationView: View {
         DocumentationTopic(title: "Scanning", icon: "scanner", intro: "The scanner list shows every device that Scan can discover. Select a device to see the options its backend supports.") {
             DocumentationSection(title: "Source settings", icon: "rectangle.and.hand.point.up.left") {
                 DefinitionRow(term: "Source", definition: "ADF Front scans one side, ADF Back scans the reverse side, ADF Duplex scans both sides, and Flatbed uses a flatbed when the scanner provides one.")
-                DefinitionRow(term: "Color mode", definition: "Color preserves color, Gray is useful for smaller document files, and Lineart is a black-and-white mode suited to clean text.")
+                DefinitionRow(term: "Color mode", definition: "Automatic scans in color and keeps color only on pages that have some; the others are saved in gray. Color preserves color, Gray is useful for smaller document files, and Lineart is a black-and-white mode suited to clean text.")
                 DefinitionRow(term: "DPI", definition: "Higher DPI captures more detail and creates larger files. 200–300 dpi is practical for most documents; use 400–600 dpi for fine detail or archival work.")
                 DefinitionRow(term: "Scanner buffering", definition: "Allows supported Fujitsu scanners to read the next sheet while the previous page is transferred. It can improve throughput for long batches.")
                 DefinitionRow(term: "Hardware JPEG compression", definition: "Asks supported scanners to compress color pages before sending them over USB. This reduces transfer size; the export format is controlled separately in Image settings.")

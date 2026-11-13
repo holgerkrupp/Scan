@@ -38,7 +38,8 @@ struct ScannerIdentity: Identifiable, Hashable, Sendable, Codable {
 }
 
 enum ScanSource: String, CaseIterable, Identifiable, Sendable, Codable { case adfFront = "ADF Front"; case adfBack = "ADF Back"; case adfDuplex = "ADF Duplex"; case flatbed = "Flatbed"; var id: String { rawValue } }
-enum ScanColorMode: String, CaseIterable, Identifiable, Sendable, Codable { case color = "Color"; case gray = "Gray"; case lineart = "Lineart"; var id: String { rawValue } }
+/// `automatic` scans in color and keeps color only on the pages that have some.
+enum ScanColorMode: String, CaseIterable, Identifiable, Sendable, Codable { case automatic = "Automatic"; case color = "Color"; case gray = "Gray"; case lineart = "Lineart"; var id: String { rawValue } }
 enum ScanOutputFormat: String, CaseIterable, Identifiable, Sendable, Codable { case pdf = "PDF"; case searchablePDF = "Searchable PDF"; case jpeg = "JPEG"; case png = "PNG"; case tiff = "TIFF"; var id: String { rawValue } }
 enum ScanExportMode: String, CaseIterable, Identifiable, Sendable, Codable { case combinedPDF = "One combined PDF"; case separateFiles = "Separate per-page files"; var id: String { rawValue } }
 
@@ -169,6 +170,8 @@ struct ScanOptions: Hashable, Sendable, Codable {
     var deskew: Bool { get { processing.deskew } set { processing.deskew = newValue } }
     var autoCrop: Bool { get { processing.autoCrop } set { processing.autoCrop = newValue } }
     var autoRotate: Bool { get { processing.autoRotate } set { processing.autoRotate = newValue } }
+    /// What the scanner itself is asked for: `automatic` is decided per page after a color scan.
+    var forScanner: ScanOptions { var options = self; if options.acquisition.colorMode == .automatic { options.acquisition.colorMode = .color }; return options }
     mutating func applyPreset(_ preset: ScanFileSizePreset) { export.sizePreset = preset; guard preset != .custom else { return }; let mapping = preset.documentedMapping; export.outputDPI = mapping.outputDPI; export.jpegQuality = mapping.quality; acquisition.colorMode = mapping.colorMode }
 }
 
@@ -199,10 +202,12 @@ struct ScannerCapabilities: Equatable, Sendable, Codable {
     init(sources: [ScanSource], colorModes: [ScanColorMode], resolutionsDPI: [Int], resolutionsBySource: [ScanSource: [Int]] = [:], outputFormats: [ScanOutputFormat] = ScanOutputFormat.allCases, scanArea: ScanArea? = nil, supportsDuplex: Bool, supportsScannerBuffering: Bool = false, supportsHardwareCompression: Bool = false, unsupportedReason: String? = nil) {
         self.sources = sources; self.colorModes = colorModes; self.resolutionsDPI = resolutionsDPI; self.resolutionsBySource = resolutionsBySource; self.outputFormats = outputFormats; self.scanArea = scanArea; self.supportsDuplex = supportsDuplex; self.supportsScannerBuffering = supportsScannerBuffering; self.supportsHardwareCompression = supportsHardwareCompression; self.unsupportedReason = unsupportedReason
     }
+    /// `automatic` is a color scan, decided per page afterwards.
+    func supports(_ mode: ScanColorMode) -> Bool { colorModes.contains(mode == .automatic ? .color : mode) }
     func resolutions(for source: ScanSource) -> [Int] { resolutionsBySource[source] ?? resolutionsDPI }
     func validate(_ options: ScanOptions) throws {
         guard sources.contains(options.acquisition.source) else { throw ScannerError.unsupportedOption("Source \(options.acquisition.source.rawValue) is not supported.") }
-        guard colorModes.contains(options.acquisition.colorMode) else { throw ScannerError.unsupportedOption("Mode \(options.acquisition.colorMode.rawValue) is not supported.") }
+        guard supports(options.acquisition.colorMode) else { throw ScannerError.unsupportedOption("Mode \(options.acquisition.colorMode.rawValue) is not supported.") }
         guard resolutions(for: options.acquisition.source).contains(options.acquisition.resolutionDPI) else { throw ScannerError.unsupportedOption("Resolution \(options.acquisition.resolutionDPI) dpi is not supported for \(options.acquisition.source.rawValue).") }
         guard outputFormats.contains(options.export.outputFormat) else { throw ScannerError.unsupportedOption("\(options.export.outputFormat.rawValue) output is not supported by this scanner backend.") }
         if options.acquisition.source == .adfDuplex && !supportsDuplex { throw ScannerError.unsupportedOption("Duplex scanning is not supported.") }
