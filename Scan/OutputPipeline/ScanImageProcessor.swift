@@ -14,8 +14,16 @@ nonisolated enum ScanImageProcessor {
         }
         if settings.removeBlankPages && isBlank(image) { return nil }
         var rendered = image
+        // Frame metadata can disagree with the decoded size (hardware JPEG
+        // widths are block-rounded); the decoded pixels are scaled to match.
+        let metadataCorrection = CGFloat(max(frame.width, 1)) / CGFloat(max(image.width, 1))
         // Straighten and crop to the page first, then optionally to the content.
-        if settings.deskew { rendered = PageAlignment.align(rendered)?.image ?? rendered }
+        if settings.deskew, let aligned = PageAlignment.align(rendered) {
+            rendered = aligned.image
+            if aligned.usedPageOutline {
+                rendered = fitToStandardPaper(rendered, dpi: Double(max(frame.resolutionDPI, 1)) / metadataCorrection) ?? rendered
+            }
+        }
         if settings.autoCrop { rendered = cropToContent(rendered) ?? rendered }
         // The text decides when it can; the landscape rule only covers pages it cannot read.
         let textRotation = settings.aiOrientation ? TextOrientationDetector.uprightRotation(for: rendered) : nil
@@ -26,13 +34,41 @@ nonisolated enum ScanImageProcessor {
         if settings.paperCleanup > 0 { rendered = applyPaperCleanup(rendered, amount: settings.paperCleanup) ?? rendered }
         let dpi = max(outputDPI, 1)
         let requestedScale = CGFloat(dpi) / CGFloat(max(frame.resolutionDPI, 1))
-        // Frame metadata can disagree with the decoded size (hardware JPEG
-        // widths are block-rounded); correct for that, but never rescale the
-        // result of cropping, alignment or rotation back to the original width.
-        let metadataCorrection = CGFloat(max(frame.width, 1)) / CGFloat(max(image.width, 1))
+        // Correct for the metadata, but never rescale the result of cropping,
+        // alignment or rotation back to the original width.
         let scaled = dpi == frame.resolutionDPI && metadataCorrection == 1 ? rendered : resize(rendered, scale: requestedScale * metadataCorrection) ?? rendered
         let data = try encodeJPEG(scaled, quality: 1.0)
         return PageFrame(id: frame.id, pageIndex: frame.pageIndex, side: frame.side, pixelFormat: .jpeg, width: scaled.width, height: scaled.height, resolutionDPI: dpi, data: data)
+    }
+
+    /// Standard sheet sizes in millimetres, portrait: ISO A3 to A6, US Letter and Legal.
+    static let standardPaperSizes: [(width: Double, height: Double)] = [(297, 420), (210, 297), (148, 210), (105, 148), (215.9, 279.4), (215.9, 355.6)]
+
+    /// The cropped sheet set on the standard paper size it matches within
+    /// 2.5% each way, centred, as ScanSnap Manager outputs an A4 letter as
+    /// A4: the scanner's resolution and the edge measurement are each off by
+    /// a few pixels, and a sheet that turned while it was fed comes out
+    /// sheared, up to about 2% longer than it is. The nearest other size is
+    /// further away (Letter is 2.8% wider than A4). Missing pixels take the
+    /// paper's level, extra ones are trimmed. `nil` when no standard size
+    /// matches.
+    static func fitToStandardPaper(_ image: CGImage, dpi: Double) -> CGImage? {
+        let width = Double(image.width), height = Double(image.height)
+        for size in standardPaperSizes {
+            for (paperWidth, paperHeight) in [(size.width, size.height), (size.height, size.width)] {
+                let targetWidth = (paperWidth * dpi / 25.4).rounded(), targetHeight = (paperHeight * dpi / 25.4).rounded()
+                guard abs(width - targetWidth) <= targetWidth * 0.025, abs(height - targetHeight) <= targetHeight * 0.025 else { continue }
+                if image.width == Int(targetWidth), image.height == Int(targetHeight) { return image }
+                guard let context = CGContext(data: nil, width: Int(targetWidth), height: Int(targetHeight), bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+                let paper = CGFloat(inkStatistics(image).paperLevel) / 255
+                context.setFillColor(CGColor(red: paper, green: paper, blue: paper, alpha: 1))
+                context.fill(CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
+                context.interpolationQuality = .none
+                context.draw(image, in: CGRect(x: ((targetWidth - width) / 2).rounded(), y: ((targetHeight - height) / 2).rounded(), width: width, height: height))
+                return context.makeImage()
+            }
+        }
+        return nil
     }
 
     /// A page is blank when almost none of it is ink. Ink is judged relative

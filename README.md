@@ -100,13 +100,22 @@ hardware deskew or crop in its capability page). Scan does the same with the
 applied to every page on export, and with **Edit > Auto-Align Page**
 (Command-Shift-L, also in a page's context menu) for a selected page. The
 separate **Crop to content** option trims the paper margins down to the
-printed content afterwards, for receipts and clippings. The page outline is found
-with Vision's document segmentation, the sheet is rotated by the tilt of its
-edges onto a white canvas, and the result is cropped to the largest rectangle
-inside the straightened sheet, minus a small margin that removes the edge
-shadow. When no outline can be found, the tilt is estimated from the content
-(the angle at which the rows of dark pixels line up best) and the background
-wedges left by the rotation are cropped away.
+printed content afterwards, for receipts and clippings.
+
+A feeder's backing is often nearly as bright as the paper, so the sheet's
+edges are measured directly where the backing ends: 81 scan lines per side,
+a line fitted through them, and the shadow along the edge skipped. The page
+is rotated by the median tilt of the sides found. With three or four sides
+the whole sheet is kept and everything outside it is whited out, so no paper
+is cut off; narrow documents such as receipts are cropped to their own width.
+Otherwise Vision's document segmentation supplies the outline, cropped to the
+largest rectangle inside the straightened sheet minus a small margin; and
+when neither finds the sheet, the tilt is estimated from the content (the
+angle at which the rows of dark pixels line up best). A cropped sheet within
+2.5% of a standard size (A3 to A6, Letter, Legal) is set on that size
+exactly, as ScanSnap Manager does. A document fed in Fujitsu's carrier sheet
+is recognised by the carrier's black band and row of blocks and cropped out
+of it.
 
 ## Reviewing and processing pages
 
