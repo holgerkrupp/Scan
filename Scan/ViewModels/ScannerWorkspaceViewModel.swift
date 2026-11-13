@@ -354,7 +354,7 @@ final class ScannerWorkspaceViewModel {
 
     @ObservationIgnored private var hardwareCoordinator: HardwareScanCoordinator? = nil
 
-    convenience init() { self.init(discovery: CompositeScannerDiscovery(), registry: .live, outputWriter: ScanOutputWriter(), profileStore: ScanProfileStore(defaults: .standard)) }
+    convenience init() { self.init(discovery: CompositeScannerDiscovery(wifi: VENSScannerDiscovery()), registry: .live, outputWriter: ScanOutputWriter(), profileStore: ScanProfileStore(defaults: .standard)) }
 
     init(discovery: ScannerDiscovery, registry: ScannerDriverRegistry, outputWriter: ScanOutputWriter, profileStore: ScanProfileStore, automaticRefreshDelay: Duration = .seconds(1), statisticsStore: ScanStatisticsStore? = nil) {
         self.discovery = discovery; self.registry = registry; self.outputWriter = outputWriter; self.profileStore = profileStore; self.automaticRefreshDelay = automaticRefreshDelay; self.statisticsStore = statisticsStore ?? .shared

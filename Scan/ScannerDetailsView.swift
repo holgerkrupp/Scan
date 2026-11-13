@@ -114,6 +114,8 @@ struct ScannerFeedSettingsView: View {
     let isSupported: Bool
     private let store = ScannerFeedSettingsStore(defaults: .standard)
     @State private var settings = ScannerFeedSettings()
+    /// Over Wi-Fi only the ultrasonic sensor can be switched, and the sensors cannot be read first.
+    private var isWiFi: Bool { identity.connectionKind == .wifi }
 
     var body: some View {
         Form {
@@ -123,7 +125,7 @@ struct ScannerFeedSettingsView: View {
                         .font(.callout).foregroundStyle(.orange)
                 }
                 Picker("Multifeed detection", selection: $settings.multifeedDetection) {
-                    ForEach(MultifeedDetection.allCases) { Text($0.label).tag($0) }
+                    ForEach(isWiFi ? [.off, .ultrasonic] : MultifeedDetection.allCases) { Text($0.label).tag($0) }
                 }
                 Text(settings.multifeedDetection.explanation).font(.caption).foregroundStyle(.secondary)
             } header: {
@@ -137,14 +139,18 @@ struct ScannerFeedSettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 Text("Paper jams and multifeeds during a scan are always reported with their own message.")
                     .font(.caption).foregroundStyle(.secondary)
+                if isWiFi {
+                    Text("Over Wi-Fi the sensors cannot be checked before scanning.").font(.caption).foregroundStyle(.secondary)
+                }
             } header: {
                 Label("Sensors and paper jam", systemImage: "exclamationmark.triangle")
             }
-            .disabled(!isSupported)
+            .disabled(!isSupported || isWiFi)
         }
         .formStyle(.grouped)
         .onAppear {
             settings = store.load(for: identity)
+            if isWiFi { settings.multifeedDetection = settings.multifeedDetection.usesUltrasonicSensor ? .ultrasonic : .off }
         }
         .onChange(of: settings) { _, newValue in store.save(newValue, for: identity) }
     }

@@ -37,7 +37,7 @@ nonisolated enum ScanImageProcessor {
         // Correct for metadata, but never rescale the result of cropping,
         // alignment or rotation back to the original width.
         var scaled = dpi == frame.resolutionDPI && metadataCorrection == 1 ? rendered : resize(rendered, scale: requestedScale * metadataCorrection) ?? rendered
-        if automaticColor, !hasColor(scaled) { scaled = grayscale(scaled) ?? scaled
+        if automaticColor, !hasColor(scaled) { scaled = grayscale(scaled) ?? scaled }
         let data = try encodeJPEG(scaled, quality: 1.0)
         return PageFrame(id: frame.id, pageIndex: frame.pageIndex, side: frame.side, pixelFormat: .jpeg, width: scaled.width, height: scaled.height, resolutionDPI: dpi, data: data)
     }
@@ -103,7 +103,6 @@ nonisolated enum ScanImageProcessor {
         guard let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
         context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
         return context.makeImage()
-
     }
 
     /// A page is blank when almost none of it is ink. Ink is judged relative
