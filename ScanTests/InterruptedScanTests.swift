@@ -5,7 +5,7 @@ import XCTest
 /// A sheet that the iX500 does not pick up (inserted moments before the
 /// hardware button) and a scan that ends in a paper jam. Driven through
 /// `FujitsuScriptedTransport` and a fake device; no hardware involved.
-final class InterruptedScanTests: XCTestCase {
+@MainActor final class InterruptedScanTests: XCTestCase {
     private let identity = FujitsuCommandTranscriptTests.identity(productID: 0x132b)
     private let wrapperPrefix = "W 43" + String(repeating: "00", count: 0x12)
 
