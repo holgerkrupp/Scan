@@ -180,7 +180,7 @@ import XCTest
             XCTAssertFalse(ix1600.contains { $0.hasPrefix(wrapperPrefix + "1d") }, "\(scenario.name): iX500 diagnostic pre-read must stay disabled")
             XCTAssertFalse(ix1600.contains { $0.hasPrefix(wrapperPrefix + "2a0088") }, "\(scenario.name): iX500 JPEG table must stay disabled")
             // Native modes: the window's composition byte follows the request.
-            let expectedComposition: UInt8 = switch scenario.options.colorMode { case .lineart: 0; case .gray: 2; case .color: 5 }
+            let expectedComposition: UInt8 = switch scenario.options.colorMode { case .lineart: 0; case .gray: 2; case .color, .automatic: 5 }
             let windowPayload = try XCTUnwrap(ix1600.first { $0.hasPrefix("W ") && $0.count == 2 + 2 * (scenario.options.source == .adfDuplex ? 136 : 72) && $0.hasPrefix("W 0000000000000040") })
             let bytes = stride(from: 2, to: windowPayload.count, by: 2).map { UInt8(windowPayload[windowPayload.index(windowPayload.startIndex, offsetBy: $0)..<windowPayload.index(windowPayload.startIndex, offsetBy: $0 + 2)], radix: 16)! }
             XCTAssertEqual(bytes[8 + 0x19], expectedComposition, "\(scenario.name): composition")

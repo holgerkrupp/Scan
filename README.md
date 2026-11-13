@@ -213,11 +213,30 @@ iX1400 and iX1300 share the iX1600 profile because they share its generation
 and command flow (SANE drives all of them with the same generic flow and
 lists the iX1300 as working), but none of them has been tested with this
 profile on its own hardware yet. The iX1300's straight return path is not
-supported, only its regular feeder. Wi-Fi scanning and touchscreen-triggered
-scans are not supported. The
+supported, only its regular feeder. Touchscreen-triggered scans are not
+supported, and Wi-Fi scanning is supported on the iX500 only (see below). The
 opt-in harness in `ScanTests/FujitsuScanSnapHardwareTests.swift` captures
 pages, a command trace, and the VPD page, and can try profile variations on a
 new scanner without rebuilding.
+
+### Wi-Fi (ScanSnap iX500)
+
+Scan also drives the iX500 over Wi-Fi, without any ScanSnap software
+running. The scanner appears in the sidebar as **ScanSnap iX500 (Wi-Fi)**
+once its lid is open; front and duplex feeding, color, gray and line-art at
+150, 200, 300 and 600 dpi, the scanner's Scan button and its ultrasonic
+double-feed sensor (Feeding & Sensors in the scanner details) are supported.
+
+- The scanner must already be set up on the network and list this Mac among
+  its registered computers, as ScanSnap's Wi-Fi setup leaves it. Scan cannot
+  register a new computer yet.
+- While Scan holds the scanner, it no longer answers discovery from other
+  computers. After quitting and reopening Scan, the scanner takes up to a
+  minute to forget the previous session and show up again.
+- With the macOS firewall on, a build signed ad hoc loses its permission for
+  incoming connections on every rebuild, and the scanner's replies and button
+  notices are then dropped. Sign with your own development team
+  (`Config/Local.xcconfig`).
 
 Note: ScanSnap Home keeps the scanner's USB interface open exclusively while
 its background process (`SshResident`) runs. Quit ScanSnap Home before using

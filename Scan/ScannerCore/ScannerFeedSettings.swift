@@ -37,6 +37,10 @@ enum MultifeedDetection: String, Codable, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// Over Wi-Fi the iX500 only switches its ultrasonic sensor on or off;
+    /// the scanner's default there is on.
+    var usesUltrasonicSensor: Bool { self != .off && self != .length }
+
     /// Byte 2 of mode page 0x38: enable (bit 7), thickness (bit 4) and
     /// length (bit 3), following SANE's `set_MSEL_df_*` macros.
     var modePageFlags: UInt8 {

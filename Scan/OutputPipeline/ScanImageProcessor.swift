@@ -8,7 +8,7 @@ nonisolated struct ProcessedPage: Sendable {
 }
 
 nonisolated enum ScanImageProcessor {
-    static func process(_ frame: PageFrame, settings: ImageProcessingSettings, outputDPI: Int) throws -> PageFrame? {
+    static func process(_ frame: PageFrame, settings: ImageProcessingSettings, outputDPI: Int, automaticColor: Bool = false) throws -> PageFrame? {
         guard let image = NSImage(data: frame.data)?.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
             throw ScannerError.outputFailed("Could not decode page \(frame.pageIndex).")
         }
@@ -34,9 +34,10 @@ nonisolated enum ScanImageProcessor {
         if settings.paperCleanup > 0 { rendered = applyPaperCleanup(rendered, amount: settings.paperCleanup) ?? rendered }
         let dpi = max(outputDPI, 1)
         let requestedScale = CGFloat(dpi) / CGFloat(max(frame.resolutionDPI, 1))
-        // Correct for the metadata, but never rescale the result of cropping,
+        // Correct for metadata, but never rescale the result of cropping,
         // alignment or rotation back to the original width.
-        let scaled = dpi == frame.resolutionDPI && metadataCorrection == 1 ? rendered : resize(rendered, scale: requestedScale * metadataCorrection) ?? rendered
+        var scaled = dpi == frame.resolutionDPI && metadataCorrection == 1 ? rendered : resize(rendered, scale: requestedScale * metadataCorrection) ?? rendered
+        if automaticColor, !hasColor(scaled) { scaled = grayscale(scaled) ?? scaled }
         let data = try encodeJPEG(scaled, quality: 1.0)
         return PageFrame(id: frame.id, pageIndex: frame.pageIndex, side: frame.side, pixelFormat: .jpeg, width: scaled.width, height: scaled.height, resolutionDPI: dpi, data: data)
     }
@@ -69,6 +70,39 @@ nonisolated enum ScanImageProcessor {
             }
         }
         return nil
+    }
+
+    /// Whether a page has any real color: at least `minimumRatio` of a small
+    /// copy is tinted beyond scanner noise (neutral pages measured 14 at most).
+    /// A stamp, a logo or a pale band is enough, since color lost here cannot
+    /// be recovered while keeping it only costs some file size.
+    /// The outer 3 percent of each edge is ignored, like for blank pages.
+    static func hasColor(_ image: CGImage, minimumChroma: Int = 30, minimumRatio: Double = 0.0001) -> Bool {
+        let width = 400, height = max(1, image.height * 400 / max(image.width, 1))
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let drawn: Bool = pixels.withUnsafeMutableBytes { buffer in
+            guard let context = CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.interpolationQuality = .medium
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return true
+        }
+        guard drawn else { return true }
+        var samples = 0, colored = 0
+        for y in (height * 3 / 100)..<(height - height * 3 / 100) {
+            for x in (width * 3 / 100)..<(width - width * 3 / 100) {
+                let offset = (y * width + x) * 4
+                let (r, g, b) = (Int(pixels[offset]), Int(pixels[offset + 1]), Int(pixels[offset + 2]))
+                samples += 1
+                if max(r, g, b) - min(r, g, b) >= minimumChroma { colored += 1 }
+            }
+        }
+        return samples > 0 && Double(colored) / Double(samples) >= minimumRatio
+    }
+
+    static func grayscale(_ image: CGImage) -> CGImage? {
+        guard let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return context.makeImage()
     }
 
     /// A page is blank when almost none of it is ink. Ink is judged relative
