@@ -172,13 +172,26 @@ nonisolated struct ScanOptions: Hashable, Sendable, Codable {
     var autoRotate: Bool { get { processing.autoRotate } set { processing.autoRotate = newValue } }
     /// What the scanner itself is asked for: `automatic` is decided per page after a color scan.
     var forScanner: ScanOptions { var options = self; if options.acquisition.colorMode == .automatic { options.acquisition.colorMode = .color }; return options }
-    mutating func applyPreset(_ preset: ScanFileSizePreset) { export.sizePreset = preset; guard preset != .custom else { return }; let mapping = preset.documentedMapping; export.outputDPI = mapping.outputDPI; export.jpegQuality = mapping.quality; acquisition.colorMode = mapping.colorMode }
+    mutating func applyPreset(_ preset: ScanFileSizePreset) { export.sizePreset = preset; guard preset != .custom else { return }; let mapping = preset.documentedMapping; export.outputDPI = mapping.outputDPI; export.jpegQuality = mapping.quality; if acquisition.colorMode != .automatic { acquisition.colorMode = mapping.colorMode } }
 }
 
 nonisolated struct ScanProfile: Identifiable, Hashable, Sendable, Codable {
     let id: UUID; var name: String; var options: ScanOptions
     init(id: UUID = UUID(), name: String, options: ScanOptions) { self.id = id; self.name = name; self.options = options }
+    /// For paper documents: both sides, 300 dpi, color kept only on the
+    /// pages that have some, straightened to the sheet, a searchable PDF
+    /// named after the document's date, type, subject and person.
+    static let documents = ScanProfile(name: "Documents (best quality)", options: ScanOptions(acquisition: AcquisitionSettings(source: .adfDuplex, colorMode: .automatic, resolutionDPI: 300), processing: ImageProcessingSettings(removeBlankPages: true, deskew: true, autoRotate: true, aiOrientation: true, whitenPaper: true), export: ExportSettings(outputFormat: .searchablePDF, sizePreset: .highQuality, outputDPI: 300, jpegQuality: 0.92, filenameTemplate: "{docdate} {type} {subject} {person}", ocrLanguages: documentLanguages())))
+    /// The languages the inspector offers for the searchable PDF's text,
+    /// the Mac's own first when it is one of them: letters are rarely only
+    /// in English, and accents or umlauts read as English come out wrong.
+    static func documentLanguages(preferred: [String] = Locale.preferredLanguages) -> [String] {
+        let offered = ["en-US", "de-DE", "fr-FR", "es-ES"]
+        guard let mac = preferred.first.map({ String($0.prefix(2)) }), let first = offered.first(where: { $0.hasPrefix(mac) }) else { return offered }
+        return [first] + offered.filter { $0 != first }
+    }
     static let defaults: [ScanProfile] = [
+        documents,
         ScanProfile(name: "Duplex PDF 300 dpi color", options: ScanOptions(acquisition: AcquisitionSettings(source: .adfDuplex, colorMode: .color, resolutionDPI: 300), processing: ImageProcessingSettings(removeBlankPages: true, autoCrop: true, deskew: true, autoRotate: true, aiOrientation: true, whitenPaper: true), export: ExportSettings(outputFormat: .pdf, sizePreset: .highQuality, outputDPI: 300, jpegQuality: 0.92))),
         ScanProfile(name: "Duplex searchable PDF", options: ScanOptions(acquisition: AcquisitionSettings(source: .adfDuplex, colorMode: .color, resolutionDPI: 300), processing: ImageProcessingSettings(removeBlankPages: true, autoCrop: true, deskew: true, autoRotate: true, aiOrientation: true, whitenPaper: true), export: ExportSettings(outputFormat: .searchablePDF, sizePreset: .highQuality, outputDPI: 300, jpegQuality: 0.92, ocrLanguages: ["en-US"]))),
         ScanProfile(name: "Single-sided JPEG", options: ScanOptions(acquisition: AcquisitionSettings(source: .adfFront, colorMode: .color, resolutionDPI: 300), processing: ImageProcessingSettings(whitenPaper: true), export: ExportSettings(outputFormat: .jpeg, sizePreset: .highQuality, outputDPI: 300, jpegQuality: 0.92, exportMode: .separateFiles)))
@@ -234,7 +247,18 @@ nonisolated enum ScannerError: LocalizedError, Equatable {
 nonisolated struct ScanProfileStore {
     private let defaults: UserDefaults; private let key = "scan.profiles.v2"; private let selectedKey = "scan.selectedProfile"
     init(defaults: UserDefaults) { self.defaults = defaults }
-    func load() -> [ScanProfile] { guard let data = defaults.data(forKey: key), let profiles = try? JSONDecoder().decode([ScanProfile].self, from: data), !profiles.isEmpty else { return ScanProfile.defaults }; return migratingFilenameTemplates(profiles) }
+    func load() -> [ScanProfile] { guard let data = defaults.data(forKey: key), let profiles = try? JSONDecoder().decode([ScanProfile].self, from: data), !profiles.isEmpty else { return ScanProfile.defaults }; return migratingFilenameTemplates(addingDocumentsProfile(profiles)) }
+    /// Once per installation, saved profiles get the Documents profile at the
+    /// top. The profile in use stays selected, even when it was only the first.
+    private func addingDocumentsProfile(_ profiles: [ScanProfile]) -> [ScanProfile] {
+        guard !defaults.bool(forKey: Self.documentsProfileAddedKey) else { return profiles }
+        defaults.set(true, forKey: Self.documentsProfileAddedKey)
+        guard !profiles.contains(where: { $0.name == ScanProfile.documents.name }) else { return profiles }
+        if defaults.string(forKey: selectedKey) == nil, let first = profiles.first { defaults.set(first.id.uuidString, forKey: selectedKey) }
+        let added = [ScanProfile(name: ScanProfile.documents.name, options: ScanProfile.documents.options)] + profiles
+        save(added)
+        return added
+    }
     /// Once per installation, saved profiles still on the previous default
     /// template move to the current one; templates the user wrote are kept.
     private func migratingFilenameTemplates(_ profiles: [ScanProfile]) -> [ScanProfile] {
@@ -244,7 +268,9 @@ nonisolated struct ScanProfileStore {
         save(migrated); defaults.set(true, forKey: migratedKey)
         return migrated
     }
-    func save(_ profiles: [ScanProfile]) { if let data = try? JSONEncoder().encode(profiles) { defaults.set(data, forKey: key) } }
+    /// Profiles saved by this version already offer the Documents profile; one the user deleted stays deleted.
+    func save(_ profiles: [ScanProfile]) { if let data = try? JSONEncoder().encode(profiles) { defaults.set(data, forKey: key); defaults.set(true, forKey: Self.documentsProfileAddedKey) } }
+    private static let documentsProfileAddedKey = "scan.profiles.documentsProfileAdded"
     var selectedProfileID: UUID? { get { defaults.string(forKey: selectedKey).flatMap(UUID.init(uuidString:)) } set { defaults.set(newValue?.uuidString, forKey: selectedKey) } }
 }
 

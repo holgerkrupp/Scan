@@ -54,6 +54,37 @@ final class ScanCoreTests: XCTestCase {
         XCTAssertTrue(ScanFileSizePreset.lossless.documentedMapping.lossless)
         var options = ScanOptions(); options.applyPreset(.small)
         XCTAssertEqual(options.acquisition.colorMode, .gray); XCTAssertEqual(options.export.outputDPI, 150)
+        options.acquisition.colorMode = .automatic; options.applyPreset(.highQuality)
+        XCTAssertEqual(options.acquisition.colorMode, .automatic, "a preset must not switch automatic color off")
+        XCTAssertEqual(options.export.outputDPI, 300)
+    }
+
+    func testNewInstallationsStartWithTheDocumentsProfile() {
+        let defaults = UserDefaults(suiteName: "DocumentsProfile-\(UUID().uuidString)")!
+        let profiles = ScanProfileStore(defaults: defaults).load()
+        XCTAssertEqual(profiles.first?.name, "Documents (best quality)")
+        XCTAssertEqual(profiles.first?.options.acquisition.colorMode, .automatic)
+        XCTAssertEqual(profiles.first?.options.export.outputFormat, .searchablePDF)
+        XCTAssertEqual(Set(profiles.first?.options.export.ocrLanguages ?? []), ["en-US", "de-DE", "fr-FR", "es-ES"], "the text of letters is not read as English only")
+        XCTAssertEqual(ScanProfile.documentLanguages(preferred: ["de-DE"]), ["de-DE", "en-US", "fr-FR", "es-ES"])
+        XCTAssertEqual(ScanProfile.documentLanguages(preferred: ["fr"]).first, "fr-FR")
+        XCTAssertEqual(ScanProfile.documentLanguages(preferred: ["ja-JP"]), ["en-US", "de-DE", "fr-FR", "es-ES"])
+        XCTAssertEqual(profiles.count, 4)
+    }
+
+    func testDocumentsProfileIsAddedOnceAndTheProfileInUseStaysSelected() throws {
+        let defaults = UserDefaults(suiteName: "DocumentsProfile-\(UUID().uuidString)")!
+        let mine = ScanProfile(name: "Mine", options: ScanOptions())
+        defaults.set(try JSONEncoder().encode([mine]), forKey: "scan.profiles.v2")
+        let store = ScanProfileStore(defaults: defaults)
+
+        let first = store.load()
+        XCTAssertEqual(first.map(\.name), ["Documents (best quality)", "Mine"])
+        XCTAssertEqual(first[1].id, mine.id)
+        XCTAssertEqual(store.selectedProfileID, mine.id, "the first profile was in use and stays selected")
+
+        store.save([mine])
+        XCTAssertEqual(store.load().map(\.name), ["Mine"], "a deleted Documents profile is not added again")
     }
 
     func testCapabilityFilteringRejectsUnsupportedOptions() {
