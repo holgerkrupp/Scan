@@ -99,6 +99,7 @@ struct ScanDocumentationView: View {
         DocumentationTopic(title: "Profiles", icon: "slider.horizontal.3", intro: "A profile is a reusable recipe for acquisition, image processing, and export. Scan includes practical starting profiles, and changes are saved automatically.") {
             DocumentationSection(title: "Working with profiles", icon: "square.stack.3d.up") {
                 DefinitionRow(term: "Profile picker", definition: "Choose a saved recipe from the Profile section at the top of the inspector. The selected profile is remembered for the next launch.")
+                DefinitionRow(term: "Documents (best quality)", definition: "The profile made for paper documents: both sides at 300 dpi, Automatic color, blank pages removed, pages straightened and turned upright, and a searchable PDF named after the document's date, type, subject and person, whose text is read in English, German, French and Spanish.")
                 DefinitionRow(term: "Profile name", definition: "Rename a profile to describe its job, such as “Receipts” or “Archive duplex”.")
                 DefinitionRow(term: "Duplicate profile", definition: "Creates a copy so you can try different settings without changing the original recipe.")
                 DefinitionRow(term: "Scanner capabilities", definition: "Options unavailable on the selected scanner are disabled. Hover a disabled control to see why it is unavailable.")
