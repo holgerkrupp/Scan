@@ -396,7 +396,7 @@ final class ImageCaptureScannerDevice: NSObject, ScannerDevice, ScannerHardwareE
         // Some drivers (Epson's ICA driver) leave the scan area empty; scanning
         // an empty area never completes, so scan the whole glass instead.
         if unit.scanArea.isEmpty { unit.scanArea = Self.fullScanArea(of: unit) }
-        switch options.colorMode { case .color: unit.pixelDataType = .RGB; case .gray: unit.pixelDataType = .gray; case .lineart: unit.pixelDataType = .BW }
+        switch options.colorMode { case .color, .automatic: unit.pixelDataType = .RGB; case .gray: unit.pixelDataType = .gray; case .lineart: unit.pixelDataType = .BW }
         if let feeder = unit as? ICScannerFunctionalUnitDocumentFeeder { feeder.duplexScanningEnabled = options.source == .adfDuplex }
     }
 

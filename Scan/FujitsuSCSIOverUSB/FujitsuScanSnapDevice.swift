@@ -1534,10 +1534,10 @@ nonisolated enum FujitsuScanSnapImageDecoder {
             return Samples(bytes: expandLineart(data: data, width: width, height: height), samplesPerPixel: 1)
         case .gray:
             return Samples(bytes: invert(data: data, count: width * height), samplesPerPixel: 1)
-        case .color:
+        case .color, .automatic:
             let rgb = deinterlacedInvertedRGB(data: data, width: width, height: height, interlace: interlace)
             switch outputColorMode {
-            case .color:
+            case .color, .automatic:
                 return Samples(bytes: rgb, samplesPerPixel: 3)
             case .gray:
                 return Samples(bytes: averageToGray(rgb: rgb, pixelCount: width * height), samplesPerPixel: 1)
@@ -1932,7 +1932,7 @@ nonisolated struct FujitsuScanPlan: Sendable {
 
     func bytesPerLine(forWidth width: Int) -> Int {
         switch scannerColorMode {
-        case .color:
+        case .color, .automatic:
             width * 3
         case .gray:
             width
@@ -1955,7 +1955,7 @@ nonisolated struct FujitsuScanPlan: Sendable {
             0
         case .gray:
             2
-        case .color:
+        case .color, .automatic:
             5
         }
     }
