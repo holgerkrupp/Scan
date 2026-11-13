@@ -35,17 +35,30 @@ nonisolated enum OCRLanguage: String, CaseIterable, Identifiable, Codable, Senda
     }
 }
 
+/// Which recognizer ocrmypdf uses for the text layer.
+nonisolated enum OCRmyPDFEngine: String, CaseIterable, Identifiable, Codable, Sendable {
+    /// Apple Live Text when the ocrmypdf-appleocr plugin is installed, Tesseract otherwise.
+    case automatic = "Automatic"
+    /// Apple Live Text through the ocrmypdf-appleocr plugin.
+    case appleLiveText = "Apple Live Text"
+    case tesseract = "Tesseract"
+    var id: String { rawValue }
+}
+
 /// App-wide OCR preferences from the Settings window's Language section.
 nonisolated struct OCRSettings: Codable, Equatable, Sendable {
     /// Default OCR language; German unless the user picks another.
     var language: OCRLanguage = .german
     /// Runs the `ocrmypdf` command-line tool on every exported PDF.
     var runOCRmyPDF = true
+    var engine: OCRmyPDFEngine = .automatic
+    /// Full path to `ocrmypdf` when it is not in a usual place; empty searches for it.
+    var ocrmypdfPath = ""
     /// For `{person}`: one per line, `Shown name = text to find, other text`.
     var people = ""
 
-    init(language: OCRLanguage = .german, runOCRmyPDF: Bool = true, people: String = "") {
-        self.language = language; self.runOCRmyPDF = runOCRmyPDF; self.people = people
+    init(language: OCRLanguage = .german, runOCRmyPDF: Bool = true, engine: OCRmyPDFEngine = .automatic, ocrmypdfPath: String = "", people: String = "") {
+        self.language = language; self.runOCRmyPDF = runOCRmyPDF; self.engine = engine; self.ocrmypdfPath = ocrmypdfPath; self.people = people
     }
 
     // Settings saved before a field existed must keep decoding.
@@ -53,6 +66,8 @@ nonisolated struct OCRSettings: Codable, Equatable, Sendable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         language = try container.decodeIfPresent(OCRLanguage.self, forKey: .language) ?? .german
         runOCRmyPDF = try container.decodeIfPresent(Bool.self, forKey: .runOCRmyPDF) ?? true
+        engine = try container.decodeIfPresent(OCRmyPDFEngine.self, forKey: .engine) ?? .automatic
+        ocrmypdfPath = try container.decodeIfPresent(String.self, forKey: .ocrmypdfPath) ?? ""
         people = try container.decodeIfPresent(String.self, forKey: .people) ?? ""
     }
 }
@@ -82,12 +97,17 @@ nonisolated struct OCRmyPDFRunner: Sendable {
     /// shell's PATH, so these are searched explicitly. The sandboxed Release
     /// build can only see them through the read-only exception in
     /// Scan.entitlements, so keep the two lists in step.
-    static let searchDirectories = ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin", "/usr/bin"]
+    /// `~/.local/bin` is where pipx installs it.
+    static let searchDirectories = ["/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin", "/usr/bin", realHomeDirectory + "/.local/bin"]
+    /// The user's own home: inside the sandbox `NSHomeDirectory()` is the app container.
+    private static var realHomeDirectory: String { getpwuid(getuid()).map { String(cString: $0.pointee.pw_dir) } ?? NSHomeDirectory() }
 
     let executableURL: URL
 
-    /// Finds `ocrmypdf` in `directories` (then in `PATH`), or returns nil.
-    static func locate(in directories: [String] = searchDirectories, environment: [String: String] = ProcessInfo.processInfo.environment, fileManager: FileManager = .default) -> OCRmyPDFRunner? {
+    /// Finds `ocrmypdf` at `customPath`, then in `directories` and `PATH`, or returns nil.
+    static func locate(customPath: String = "", in directories: [String] = searchDirectories, environment: [String: String] = ProcessInfo.processInfo.environment, fileManager: FileManager = .default) -> OCRmyPDFRunner? {
+        let custom = (customPath.trimmingCharacters(in: .whitespaces) as NSString).expandingTildeInPath
+        if !custom.isEmpty, fileManager.isExecutableFile(atPath: custom) { return OCRmyPDFRunner(executableURL: URL(fileURLWithPath: custom)) }
         let pathDirectories = environment["PATH"]?.split(separator: ":").map(String.init) ?? []
         for directory in directories + pathDirectories {
             let candidate = URL(fileURLWithPath: directory).appendingPathComponent("ocrmypdf")
@@ -99,8 +119,31 @@ nonisolated struct OCRmyPDFRunner: Sendable {
     /// Arguments for one PDF. `--skip-text` leaves pages that already carry
     /// text alone (e.g. a "Searchable PDF" export made with Vision) instead
     /// of failing on them.
-    static func arguments(input: URL, output: URL, language: OCRLanguage) -> [String] {
-        ["--language", language.tesseractCode, "--skip-text", "--output-type", "pdf", input.path, output.path]
+    /// `usesAppleOCR` recognizes with Apple Live Text through the
+    /// ocrmypdf-appleocr plugin instead of Tesseract.
+    static func arguments(input: URL, output: URL, language: OCRLanguage, usesAppleOCR: Bool = false) -> [String] {
+        var arguments = ["--language", language.tesseractCode, "--skip-text", "--output-type", "pdf"]
+        if usesAppleOCR { arguments += ["--ocr-engine", "appleocr", "--appleocr-recognition-mode", "livetext"] }
+        return arguments + [input.path, output.path]
+    }
+
+    /// Whether the ocrmypdf-appleocr plugin is installed next to this ocrmypdf.
+    func hasAppleOCR() async -> Bool {
+        guard let result = try? await run(arguments: ["--help"], capturingOutput: true), result.status == 0 else { return false }
+        return result.output.contains("appleocr")
+    }
+
+    /// Apple Live Text gave no answer in time, as happens while macOS
+    /// prepares its text recognition models after an update.
+    struct LiveTextTimeout: LocalizedError {
+        var errorDescription: String? { "Apple Live Text did not respond." }
+    }
+
+    /// The error for a run of ocrmypdf on `fileName` that failed.
+    static func failure(errorOutput: String, status: Int32, fileName: String) -> Error {
+        if errorOutput.contains("Timeout in VKCImageAnalyzerRequest") { return LiveTextTimeout() }
+        let detail = errorOutput.split(separator: "\n").last.map(String.init) ?? "exit status \(status)"
+        return ScannerError.outputFailed("ocrmypdf failed for \(fileName): \(detail)")
     }
 
     /// PATH for the child process: ocrmypdf itself calls tesseract and
@@ -116,17 +159,16 @@ nonisolated struct OCRmyPDFRunner: Sendable {
     /// other files are ignored. `onFile` is told which PDF (1-based, of the
     /// PDFs in `urls`) is about to be processed.
     @discardableResult
-    func process(_ urls: [URL], language: OCRLanguage, onFile: (@MainActor @Sendable (Int, Int, URL) -> Void)? = nil) async throws -> [URL] {
+    func process(_ urls: [URL], language: OCRLanguage, usesAppleOCR: Bool = false, onFile: (@MainActor @Sendable (Int, Int, URL) -> Void)? = nil) async throws -> [URL] {
         var processed: [URL] = []
         let pdfs = urls.filter { $0.pathExtension.lowercased() == "pdf" }
         for (index, url) in pdfs.enumerated() {
             await onFile?(index + 1, pdfs.count, url)
             let output = url.deletingLastPathComponent().appendingPathComponent(".\(url.deletingPathExtension().lastPathComponent)-ocr-\(UUID().uuidString).pdf")
             defer { try? FileManager.default.removeItem(at: output) }
-            let result = try await run(arguments: Self.arguments(input: url, output: output, language: language))
+            let result = try await run(arguments: Self.arguments(input: url, output: output, language: language, usesAppleOCR: usesAppleOCR))
             guard result.status == 0, FileManager.default.fileExists(atPath: output.path) else {
-                let detail = result.errorOutput.split(separator: "\n").last.map(String.init) ?? "exit status \(result.status)"
-                throw ScannerError.outputFailed("ocrmypdf failed for \(url.lastPathComponent): \(detail)")
+                throw Self.failure(errorOutput: result.errorOutput, status: result.status, fileName: url.lastPathComponent)
             }
             _ = try FileManager.default.replaceItemAt(url, withItemAt: output)
             processed.append(url)
@@ -134,7 +176,7 @@ nonisolated struct OCRmyPDFRunner: Sendable {
         return processed
     }
 
-    private func run(arguments: [String]) async throws -> (status: Int32, errorOutput: String) {
+    private func run(arguments: [String], capturingOutput: Bool = false) async throws -> (status: Int32, errorOutput: String, output: String) {
         // stderr goes to a file: a pipe that is only read at exit could fill
         // up on a verbose run and block ocrmypdf forever.
         let errorLog = FileManager.default.temporaryDirectory.appendingPathComponent("ocrmypdf-\(UUID().uuidString).log")
@@ -148,7 +190,14 @@ nonisolated struct OCRmyPDFRunner: Sendable {
         process.arguments = arguments
         process.environment = environment()
         process.standardError = errorHandle
-        process.standardOutput = FileHandle.nullDevice
+        let outputLog = FileManager.default.temporaryDirectory.appendingPathComponent("ocrmypdf-\(UUID().uuidString).out")
+        defer { try? FileManager.default.removeItem(at: outputLog) }
+        if capturingOutput {
+            FileManager.default.createFile(atPath: outputLog.path, contents: nil)
+            process.standardOutput = try FileHandle(forWritingTo: outputLog)
+        } else {
+            process.standardOutput = FileHandle.nullDevice
+        }
         let status: Int32 = try await withCheckedThrowingContinuation { continuation in
             process.terminationHandler = { continuation.resume(returning: $0.terminationStatus) }
             do { try process.run() } catch {
@@ -156,6 +205,6 @@ nonisolated struct OCRmyPDFRunner: Sendable {
                 continuation.resume(throwing: ScannerError.outputFailed("Could not start ocrmypdf: \(error.localizedDescription)"))
             }
         }
-        return (status, (try? String(contentsOf: errorLog, encoding: .utf8)) ?? "")
+        return (status, (try? String(contentsOf: errorLog, encoding: .utf8)) ?? "", (try? String(contentsOf: outputLog, encoding: .utf8)) ?? "")
     }
 }

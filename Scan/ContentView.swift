@@ -240,8 +240,11 @@ struct ContentView: View {
                     ForEach(OCRLanguage.allCases) { Text($0.displayName).tag($0) }
                 }
                 Toggle("Run OCR (ocrmypdf) after scanning", isOn: $viewModel.ocrSettings.runOCRmyPDF)
+                if viewModel.ocrSettings.runOCRmyPDF {
+                    Picker("OCR engine", selection: $viewModel.ocrSettings.engine) { ForEach(OCRmyPDFEngine.allCases) { Text($0.rawValue).tag($0) } }
+                }
                 if viewModel.isRunningOCR { HStack { ProgressView().controlSize(.small); Text("Running ocrmypdf…").font(.caption).foregroundStyle(.secondary) } }
-                else if viewModel.ocrSettings.runOCRmyPDF && OCRmyPDFRunner.locate() == nil { Text("ocrmypdf was not found. Install it with \"brew install ocrmypdf\".").font(.caption).foregroundStyle(.orange) }
+                else if viewModel.ocrSettings.runOCRmyPDF && OCRmyPDFRunner.locate(customPath: viewModel.ocrSettings.ocrmypdfPath) == nil { Text("ocrmypdf was not found. Install it with \"brew install ocrmypdf\".").font(.caption).foregroundStyle(.orange) }
                 else { Text("Same setting as Settings ▸ Language. Applies to every exported PDF.").font(.caption).foregroundStyle(.secondary) }
             }
             Section("Image") {
