@@ -738,20 +738,44 @@ final class ScannerWorkspaceViewModel {
 
     /// Runs ocrmypdf on the exported PDFs when Settings ▸ Language enables it.
     /// A failure keeps the exported files untouched and is reported in the status.
+    /// Whether each ocrmypdf found has the Apple Live Text plugin; asking
+    /// costs a second of Python start-up, so the answer is kept.
+    private var appleOCRAvailability: [URL: Bool] = [:]
+
+    private func hasAppleOCR(_ runner: OCRmyPDFRunner) async -> Bool {
+        if let known = appleOCRAvailability[runner.executableURL] { return known }
+        let available = await runner.hasAppleOCR()
+        appleOCRAvailability[runner.executableURL] = available
+        return available
+    }
+
     private func runOCRmyPDFIfEnabled(on outputs: [URL], startedAt: Date) async {
         let pdfs = outputs.filter { $0.pathExtension.lowercased() == "pdf" }
         guard ocrSettings.runOCRmyPDF, !pdfs.isEmpty else { return }
-        guard let runner = OCRmyPDFRunner.locate() else {
+        guard let runner = OCRmyPDFRunner.locate(customPath: ocrSettings.ocrmypdfPath) else {
             log("ocrmypdf was not found in \(OCRmyPDFRunner.searchDirectories.joined(separator: ", ")); install it with \"brew install ocrmypdf\" or turn OCR off in Settings.")
             return
         }
         let language = ocrSettings.language
         isRunningOCR = true
         defer { isRunningOCR = false }
-        log("Running ocrmypdf (\(language.tesseractCode)) on \(pdfs.count) PDF\(pdfs.count == 1 ? "" : "s")…")
+        var usesAppleOCR = false
+        if ocrSettings.engine != .tesseract {
+            usesAppleOCR = await hasAppleOCR(runner)
+            if !usesAppleOCR, ocrSettings.engine == .appleLiveText { log("The ocrmypdf-appleocr plugin is not installed next to ocrmypdf; using Tesseract.") }
+        }
+        let onFile: @MainActor @Sendable (Int, Int, URL) -> Void = { [weak self] file, total, url in
+            self?.postScanActivity = .ocrmypdf(file: file, of: total, name: url.lastPathComponent, language: language.displayName, startedAt: startedAt)
+        }
+        log("Running ocrmypdf (\(usesAppleOCR ? "Apple Live Text" : "Tesseract"), \(language.tesseractCode)) on \(pdfs.count) PDF\(pdfs.count == 1 ? "" : "s")…")
         do {
-            let processed = try await runner.process(pdfs, language: language) { [weak self] file, total, url in
-                self?.postScanActivity = .ocrmypdf(file: file, of: total, name: url.lastPathComponent, language: language.displayName, startedAt: startedAt)
+            let processed: [URL]
+            do {
+                processed = try await runner.process(pdfs, language: language, usesAppleOCR: usesAppleOCR, onFile: onFile)
+            } catch is OCRmyPDFRunner.LiveTextTimeout {
+                // macOS may still be preparing its recognition models; the PDFs are untouched.
+                log("Apple Live Text did not respond, as happens while macOS prepares its text recognition models; using Tesseract instead.")
+                processed = try await runner.process(pdfs, language: language, usesAppleOCR: false, onFile: onFile)
             }
             lastOutputByteCount = outputs.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { Int64($0) } ?? 0) }
             log("OCR finished for \(processed.map(\.lastPathComponent).joined(separator: ", ")).")

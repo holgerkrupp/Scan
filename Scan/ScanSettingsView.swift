@@ -38,6 +38,12 @@ struct ScanSettingsView: View {
                     ForEach(OCRLanguage.allCases) { Text($0.displayName).tag($0) }
                 }
                 Toggle("Run OCR (ocrmypdf) after scanning", isOn: $viewModel.ocrSettings.runOCRmyPDF)
+                if viewModel.ocrSettings.runOCRmyPDF {
+                    Picker("OCR engine", selection: $viewModel.ocrSettings.engine) {
+                        ForEach(OCRmyPDFEngine.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    TextField("ocrmypdf path", text: $viewModel.ocrSettings.ocrmypdfPath, prompt: Text("Found automatically"))
+                }
                 Text(ocrmypdfStatus)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -127,8 +133,13 @@ struct ScanSettingsView: View {
 extension ScanSettingsView {
     private var ocrmypdfStatus: String {
         guard viewModel.ocrSettings.runOCRmyPDF else { return "Exported PDFs are saved without an ocrmypdf text layer." }
-        guard let runner = OCRmyPDFRunner.locate() else { return "ocrmypdf was not found. Install it with \"brew install ocrmypdf\"." }
-        return "Every exported PDF is passed to \(runner.executableURL.path) with language \(viewModel.ocrSettings.language.tesseractCode)."
+        guard let runner = OCRmyPDFRunner.locate(customPath: viewModel.ocrSettings.ocrmypdfPath) else { return "ocrmypdf was not found. Install it with \"brew install ocrmypdf\" or \"pipx install ocrmypdf\", or set its path." }
+        let engine = switch viewModel.ocrSettings.engine {
+        case .automatic: "Apple Live Text when the ocrmypdf-appleocr plugin is installed, Tesseract otherwise"
+        case .appleLiveText: "Apple Live Text (ocrmypdf-appleocr plugin), Tesseract if it is missing or does not respond"
+        case .tesseract: "Tesseract"
+        }
+        return "Every exported PDF is passed to \(runner.executableURL.path) with language \(viewModel.ocrSettings.language.tesseractCode), using \(engine). Pages of a Searchable PDF already carry Vision's text and are left as they are."
     }
 }
 

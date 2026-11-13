@@ -28,12 +28,23 @@ there writes it into the project file, which overrides the configuration files.
 Spanish, Italian, Dutch, Polish or Portuguese) and switch on **Run OCR
 (ocrmypdf) after scanning**. Every exported PDF is then passed to the
 [`ocrmypdf`](https://ocrmypdf.readthedocs.io) command-line tool
-(`brew install ocrmypdf`), which adds a Tesseract text layer. The result is
+(`brew install ocrmypdf`), which adds a text layer. The result is
 written next to the PDF and swapped in only when ocrmypdf succeeds, so a
-failed run never damages a scan. Scan looks for the tool in
-`/opt/homebrew/bin`, `/usr/local/bin`, `/opt/local/bin` and `/usr/bin`; the
-sandboxed app reaches the package-manager folders through a read-only
-exception in `Scan.entitlements`.
+failed run never damages a scan. **OCR engine** picks the recognizer:
+Tesseract, or Apple Live Text through the
+[`ocrmypdf-appleocr`](https://github.com/mkyt/OCRmyPDF-AppleOCR) plugin
+(installed into ocrmypdf's own Python environment, for example
+`pipx inject ocrmypdf ocrmypdf-appleocr`), which reads mixed layouts and
+accented text better. **Automatic** uses Live Text when the plugin is
+installed and Tesseract otherwise. When Live Text does not answer in time,
+as happens while macOS prepares its recognition models after an update, the
+PDF is recognized with Tesseract instead. The engine applies to **PDF**
+exports: a **Searchable PDF** already carries the text Vision recognized
+while exporting, and ocrmypdf leaves pages with text alone. Scan looks for the tool in
+`/opt/homebrew/bin`, `/usr/local/bin`, `/opt/local/bin`, `/usr/bin` and
+`~/.local/bin` (pipx), or at the path set in Settings ▸ Language; the
+sandboxed app reaches these folders through read-only exceptions in
+`Scan.entitlements`.
 
 **Document names.** The filename template knows the token `{name}` next to
 `{date}`, `{time}`, `{page}` and `{side}`. It is a short title that Apple
