@@ -10,7 +10,7 @@ import XCTest
 /// passing test proves the shared engine still sends byte-identical commands
 /// for that model. The iX500 fixtures pin the current behaviour that was
 /// validated on hardware.
-final class FujitsuCommandTranscriptTests: XCTestCase {
+@MainActor final class FujitsuCommandTranscriptTests: XCTestCase {
     struct Scenario {
         let name: String
         let options: ScanOptions

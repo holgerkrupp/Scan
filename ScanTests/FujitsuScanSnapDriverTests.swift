@@ -1,7 +1,7 @@
 import XCTest
 @testable import Scan
 
-final class FujitsuScanSnapDriverTests: XCTestCase {
+@MainActor final class FujitsuScanSnapDriverTests: XCTestCase {
     private let ix500Identity = ScannerIdentity(
         name: "ScanSnap iX500", manufacturer: "Fujitsu", model: "iX500", serialNumber: "X1",
         connectionKind: .usb, usbDeviceID: USBDeviceID(vendorID: 0x04c5, productID: 0x132b), locationID: 3

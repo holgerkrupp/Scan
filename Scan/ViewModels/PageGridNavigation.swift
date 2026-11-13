@@ -3,7 +3,7 @@ import Foundation
 /// Keyboard navigation over the page grid, independent of SwiftUI so it can
 /// be unit-tested: which page becomes selected for an arrow key, Home or End,
 /// given the current selection and the number of columns on screen.
-enum PageGridNavigation {
+nonisolated enum PageGridNavigation {
     enum Move: Equatable {
         case left, right, up, down, first, last
     }

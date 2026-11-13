@@ -151,7 +151,9 @@ final class ScanNotificationService: NSObject, UNUserNotificationCenterDelegate 
         center.add(request)
     }
 
-    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+    // The notification center may call its delegate on any thread.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        nonisolated(unsafe) let completionHandler = completionHandler
         let path = response.notification.request.content.userInfo["url"] as? String
         Task { @MainActor in
             if let path { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
@@ -160,7 +162,7 @@ final class ScanNotificationService: NSObject, UNUserNotificationCenterDelegate 
         }
     }
 
-    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .sound])
     }
 }

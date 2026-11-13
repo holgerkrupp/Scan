@@ -141,7 +141,8 @@ final class ScanOutputWriter {
         context.beginPDFPage([kCGPDFContextMediaBox as String: boxData] as CFDictionary); context.interpolationQuality = .high; context.draw(image, in: pageBounds); drawInvisibleText(lines, in: pageBounds, context: context); context.endPDFPage()
     }
 
-    private func recognizeText(in image: CGImage, languages: [String]) async throws -> [RecognizedTextLine] {
+    /// Vision calls back on its own queue, so neither this nor its closures may be tied to the main actor.
+    nonisolated private func recognizeText(in image: CGImage, languages: [String]) async throws -> [RecognizedTextLine] {
         try await withCheckedThrowingContinuation { continuation in
             let request = VNRecognizeTextRequest { request, error in
                 if let error { continuation.resume(throwing: error); return }

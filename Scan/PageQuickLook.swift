@@ -110,15 +110,22 @@ final class ScanAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
-    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
+    // AppKit declares these outside any actor but only calls them on the main thread.
+    nonisolated override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
 
-    override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
-        panel.dataSource = PageQuickLookController.shared
-        panel.delegate = PageQuickLookController.shared
+    nonisolated override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        let panel = panel!
+        MainActor.assumeIsolated {
+            panel.dataSource = PageQuickLookController.shared
+            panel.delegate = PageQuickLookController.shared
+        }
     }
 
-    override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
-        panel.dataSource = nil
-        panel.delegate = nil
+    nonisolated override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        let panel = panel!
+        MainActor.assumeIsolated {
+            panel.dataSource = nil
+            panel.delegate = nil
+        }
     }
 }

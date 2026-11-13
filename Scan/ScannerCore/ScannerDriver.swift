@@ -74,7 +74,7 @@ extension ScannerDiscovery {
     func observeChanges(_ onChange: @escaping @MainActor () -> Void) {}
 }
 
-protocol USBDeviceTransport: Sendable {
+nonisolated protocol USBDeviceTransport: Sendable {
     var identity: ScannerIdentity { get }
     var endpointSummary: String { get async }
 

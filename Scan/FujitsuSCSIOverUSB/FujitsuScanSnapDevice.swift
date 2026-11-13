@@ -199,7 +199,7 @@ private struct FujitsuInquiry {
 
 /// How the scanner interleaves colour samples on the wire. Mirrors SANE's
 /// `COLOR_INTERLACE_RGB`, `_BGR` and `_RRGGBB`.
-enum FujitsuColorInterlace: CaseIterable, Sendable {
+nonisolated enum FujitsuColorInterlace: CaseIterable, Sendable {
     /// Pixel-interleaved `r g b r g b ...` (scanning order "dot", argument RGB).
     case rgb
     /// Pixel-interleaved `b g r b g r ...` (scanning order "dot", argument BGR).
@@ -459,7 +459,7 @@ private final class FujitsuSCSIOverUSBCommandEngine {
 
     /// Runs `encodeSheet` on a utility-priority GCD thread so the CPU-bound
     /// decode/JPEG work never competes with the transport's I/O continuations.
-    private static func encodeSheetInBackground(
+    nonisolated private static func encodeSheetInBackground(
         _ rawImages: [FujitsuRawImage],
         plan: FujitsuScanPlan,
         interlace: FujitsuColorInterlace,
@@ -474,7 +474,7 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         }
     }
 
-    private static func encodeSheet(
+    nonisolated private static func encodeSheet(
         _ rawImages: [FujitsuRawImage],
         plan: FujitsuScanPlan,
         interlace: FujitsuColorInterlace,
@@ -1365,7 +1365,7 @@ private final class FujitsuSCSIOverUSBCommandEngine {
         return FujitsuSenseData(bytes: bytes)
     }
 
-    private static func encodeImage(
+    nonisolated private static func encodeImage(
         data: Data,
         size: FujitsuImageSize,
         plan: FujitsuScanPlan,
@@ -1464,7 +1464,7 @@ private final class FujitsuSCSIOverUSBCommandEngine {
 /// grayscale and line-art derived here, the same way SANE's
 /// `downsample_from_buffer()` does it: average of the three channels, and a
 /// fixed mid-range threshold for line-art.
-enum FujitsuScanSnapImageDecoder {
+nonisolated enum FujitsuScanSnapImageDecoder {
     nonisolated struct Samples: Equatable, Sendable {
         let bytes: [UInt8]
         let samplesPerPixel: Int
@@ -1641,7 +1641,7 @@ enum FujitsuGammaTable {
     }
 }
 
-private struct FujitsuSenseData {
+private nonisolated struct FujitsuSenseData {
     let senseKey: UInt8
     let asc: UInt8
     let ascq: UInt8
@@ -1807,7 +1807,7 @@ nonisolated struct FujitsuImageSize: Equatable, Sendable {
 }
 
 /// One side of a sheet as delivered by the scanner, before decoding.
-private struct FujitsuRawImage: Sendable {
+nonisolated private struct FujitsuRawImage: Sendable {
     let side: PageSide
     let size: FujitsuImageSize
     let data: Data
@@ -1859,7 +1859,7 @@ private final class FujitsuImageReadState {
 /// `colorMode` is what the user asked for and what the emitted `PageFrame`
 /// contains. `scannerColorMode` is what the scanner is asked to produce; the
 /// two differ on models that emulate grayscale/line-art in software.
-struct FujitsuScanPlan: Sendable {
+nonisolated struct FujitsuScanPlan: Sendable {
     let options: ScanOptions
     let resolutionDPI: Int
     let colorMode: ScanColorMode

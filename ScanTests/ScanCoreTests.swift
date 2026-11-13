@@ -504,8 +504,7 @@ private final class ButtonMonitoringDevice: ScannerDevice, ScannerHardwareEventS
     func stopHardwareEventObservation() async {}
 }
 
-@MainActor
-private final class ScriptedUSBTransport: USBDeviceTransport, @unchecked Sendable {
+nonisolated private final class ScriptedUSBTransport: USBDeviceTransport, @unchecked Sendable {
     let identity = ScannerIdentity(
         name: "Scripted S300",
         manufacturer: "Fujitsu",

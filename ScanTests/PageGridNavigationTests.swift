@@ -1,7 +1,7 @@
 import XCTest
 @testable import Scan
 
-final class PageGridNavigationTests: XCTestCase {
+@MainActor final class PageGridNavigationTests: XCTestCase {
     func testNothingSelectedPicksFirstOrLast() {
         XCTAssertEqual(PageGridNavigation.index(after: nil, move: .right, count: 5, columns: 3), 0)
         XCTAssertEqual(PageGridNavigation.index(after: nil, move: .up, count: 5, columns: 3), 0)
@@ -58,7 +58,7 @@ final class PageGridNavigationTests: XCTestCase {
     }
 }
 
-final class PageQuickLookTests: XCTestCase {
+@MainActor final class PageQuickLookTests: XCTestCase {
     private func keyEvent(_ code: UInt16, characters: String) -> NSEvent {
         NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, characters: characters, charactersIgnoringModifiers: characters, isARepeat: false, keyCode: code)!
     }

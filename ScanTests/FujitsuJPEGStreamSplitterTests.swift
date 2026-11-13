@@ -1,7 +1,7 @@
 import XCTest
 @testable import Scan
 
-final class FujitsuJPEGStreamSplitterTests: XCTestCase {
+@MainActor final class FujitsuJPEGStreamSplitterTests: XCTestCase {
     private let soi: [UInt8] = [0xff, 0xd8]
     private let dqt: [UInt8] = [0xff, 0xdb, 0x00, 0x04, 0x00, 0x00]
     private let dri: [UInt8] = [0xff, 0xdd, 0x00, 0x04, 0x00, 0x01]

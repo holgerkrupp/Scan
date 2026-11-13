@@ -1,6 +1,6 @@
 import Foundation
 
-enum ScanTrace {
+nonisolated enum ScanTrace {
     static let notificationName = Notification.Name("ScanTraceNotification")
     static let messageKey = "message"
     static func post(_ message: String) { NotificationCenter.default.post(name: notificationName, object: nil, userInfo: [messageKey: message]) }
@@ -12,9 +12,9 @@ nonisolated struct USBDeviceID: Hashable, Sendable, Codable {
     var displayString: String { String(format: "0x%04x/0x%04x", vendorID, productID) }
 }
 
-enum ScannerConnectionKind: String, Sendable, Codable { case usb = "USB"; case imageCapture = "Image Capture" }
+nonisolated enum ScannerConnectionKind: String, Sendable, Codable { case usb = "USB"; case imageCapture = "Image Capture" }
 
-struct ScannerIdentity: Identifiable, Hashable, Sendable, Codable {
+nonisolated struct ScannerIdentity: Identifiable, Hashable, Sendable, Codable {
     let name: String
     let manufacturer: String
     let model: String
@@ -37,12 +37,12 @@ struct ScannerIdentity: Identifiable, Hashable, Sendable, Codable {
     }
 }
 
-enum ScanSource: String, CaseIterable, Identifiable, Sendable, Codable { case adfFront = "ADF Front"; case adfBack = "ADF Back"; case adfDuplex = "ADF Duplex"; case flatbed = "Flatbed"; var id: String { rawValue } }
-enum ScanColorMode: String, CaseIterable, Identifiable, Sendable, Codable { case color = "Color"; case gray = "Gray"; case lineart = "Lineart"; var id: String { rawValue } }
-enum ScanOutputFormat: String, CaseIterable, Identifiable, Sendable, Codable { case pdf = "PDF"; case searchablePDF = "Searchable PDF"; case jpeg = "JPEG"; case png = "PNG"; case tiff = "TIFF"; var id: String { rawValue } }
-enum ScanExportMode: String, CaseIterable, Identifiable, Sendable, Codable { case combinedPDF = "One combined PDF"; case separateFiles = "Separate per-page files"; var id: String { rawValue } }
+nonisolated enum ScanSource: String, CaseIterable, Identifiable, Sendable, Codable { case adfFront = "ADF Front"; case adfBack = "ADF Back"; case adfDuplex = "ADF Duplex"; case flatbed = "Flatbed"; var id: String { rawValue } }
+nonisolated enum ScanColorMode: String, CaseIterable, Identifiable, Sendable, Codable { case color = "Color"; case gray = "Gray"; case lineart = "Lineart"; var id: String { rawValue } }
+nonisolated enum ScanOutputFormat: String, CaseIterable, Identifiable, Sendable, Codable { case pdf = "PDF"; case searchablePDF = "Searchable PDF"; case jpeg = "JPEG"; case png = "PNG"; case tiff = "TIFF"; var id: String { rawValue } }
+nonisolated enum ScanExportMode: String, CaseIterable, Identifiable, Sendable, Codable { case combinedPDF = "One combined PDF"; case separateFiles = "Separate per-page files"; var id: String { rawValue } }
 
-enum ScanFileSizePreset: String, CaseIterable, Identifiable, Sendable, Codable {
+nonisolated enum ScanFileSizePreset: String, CaseIterable, Identifiable, Sendable, Codable {
     case small = "Small", balanced = "Balanced", highQuality = "High Quality", lossless = "Lossless", custom = "Custom"
     var id: String { rawValue }
     /// Preset contract: output DPI, output color, lossy quality, and lossless choice.
@@ -51,9 +51,9 @@ enum ScanFileSizePreset: String, CaseIterable, Identifiable, Sendable, Codable {
     }
 }
 
-enum PageRotation: Int, CaseIterable, Identifiable, Sendable, Codable { case degrees0 = 0, degrees90 = 90, degrees180 = 180, degrees270 = 270; var id: Int { rawValue } }
+nonisolated enum PageRotation: Int, CaseIterable, Identifiable, Sendable, Codable { case degrees0 = 0, degrees90 = 90, degrees180 = 180, degrees270 = 270; var id: Int { rawValue } }
 
-struct AcquisitionSettings: Hashable, Sendable, Codable {
+nonisolated struct AcquisitionSettings: Hashable, Sendable, Codable {
     var source: ScanSource = .adfDuplex
     var colorMode: ScanColorMode = .color
     var resolutionDPI: Int = 300
@@ -82,7 +82,7 @@ struct AcquisitionSettings: Hashable, Sendable, Codable {
         hardwareCompression = try container.decodeIfPresent(Bool.self, forKey: .hardwareCompression) ?? false
     }
 }
-struct ImageProcessingSettings: Hashable, Sendable, Codable {
+nonisolated struct ImageProcessingSettings: Hashable, Sendable, Codable {
     var removeBlankPages: Bool
     /// Crops to the content's bounding box, removing the paper margins.
     var autoCrop: Bool
@@ -141,7 +141,7 @@ struct ImageProcessingSettings: Hashable, Sendable, Codable {
         whitenPaper = try container.decodeIfPresent(Bool.self, forKey: .whitenPaper) ?? false
     }
 }
-struct ExportSettings: Hashable, Sendable, Codable {
+nonisolated struct ExportSettings: Hashable, Sendable, Codable {
     var outputFormat: ScanOutputFormat = .pdf
     var sizePreset: ScanFileSizePreset = .balanced
     var outputDPI: Int = 200
@@ -155,7 +155,7 @@ struct ExportSettings: Hashable, Sendable, Codable {
     var automaticallySaveAfterScanning = true
 }
 
-struct ScanOptions: Hashable, Sendable, Codable {
+nonisolated struct ScanOptions: Hashable, Sendable, Codable {
     var acquisition: AcquisitionSettings
     var processing: ImageProcessingSettings
     var export: ExportSettings
@@ -172,7 +172,7 @@ struct ScanOptions: Hashable, Sendable, Codable {
     mutating func applyPreset(_ preset: ScanFileSizePreset) { export.sizePreset = preset; guard preset != .custom else { return }; let mapping = preset.documentedMapping; export.outputDPI = mapping.outputDPI; export.jpegQuality = mapping.quality; acquisition.colorMode = mapping.colorMode }
 }
 
-struct ScanProfile: Identifiable, Hashable, Sendable, Codable {
+nonisolated struct ScanProfile: Identifiable, Hashable, Sendable, Codable {
     let id: UUID; var name: String; var options: ScanOptions
     init(id: UUID = UUID(), name: String, options: ScanOptions) { self.id = id; self.name = name; self.options = options }
     static let defaults: [ScanProfile] = [
@@ -182,7 +182,7 @@ struct ScanProfile: Identifiable, Hashable, Sendable, Codable {
     ]
 }
 
-struct ScannerCapabilities: Equatable, Sendable, Codable {
+nonisolated struct ScannerCapabilities: Equatable, Sendable, Codable {
     struct ScanArea: Equatable, Sendable, Codable { let width: Double; let height: Double; let unit: String }
     let sources: [ScanSource]; let colorModes: [ScanColorMode]; let resolutionsDPI: [Int]; let outputFormats: [ScanOutputFormat]
     /// Some Image Capture devices expose different resolution sets for the
@@ -211,22 +211,22 @@ struct ScannerCapabilities: Equatable, Sendable, Codable {
     }
 }
 
-enum PageSide: String, Sendable, Codable { case front, back, unknown }
-enum PagePixelFormat: String, Sendable, Codable { case jpeg, png, tiff, rgb8, gray8, unknown }
+nonisolated enum PageSide: String, Sendable, Codable { case front, back, unknown }
+nonisolated enum PagePixelFormat: String, Sendable, Codable { case jpeg, png, tiff, rgb8, gray8, unknown }
 nonisolated struct PageFrame: Identifiable, Sendable, Codable { let id: UUID; let pageIndex: Int; let side: PageSide; let pixelFormat: PagePixelFormat; let width: Int; let height: Int; let resolutionDPI: Int; let data: Data; init(id: UUID = UUID(), pageIndex: Int, side: PageSide, pixelFormat: PagePixelFormat, width: Int, height: Int, resolutionDPI: Int, data: Data) { self.id = id; self.pageIndex = pageIndex; self.side = side; self.pixelFormat = pixelFormat; self.width = width; self.height = height; self.resolutionDPI = resolutionDPI; self.data = data } }
-struct StoredPage: Identifiable, Sendable { let id: UUID; let pageIndex: Int; let side: PageSide; let pixelFormat: PagePixelFormat; let width: Int; let height: Int; let resolutionDPI: Int; let fileURL: URL; nonisolated init(frame: PageFrame, fileURL: URL) { id = frame.id; pageIndex = frame.pageIndex; side = frame.side; pixelFormat = frame.pixelFormat; width = frame.width; height = frame.height; resolutionDPI = frame.resolutionDPI; self.fileURL = fileURL } }
+nonisolated struct StoredPage: Identifiable, Sendable { let id: UUID; let pageIndex: Int; let side: PageSide; let pixelFormat: PagePixelFormat; let width: Int; let height: Int; let resolutionDPI: Int; let fileURL: URL; nonisolated init(frame: PageFrame, fileURL: URL) { id = frame.id; pageIndex = frame.pageIndex; side = frame.side; pixelFormat = frame.pixelFormat; width = frame.width; height = frame.height; resolutionDPI = frame.resolutionDPI; self.fileURL = fileURL } }
 
-enum ScannerStatus: Equatable, Sendable {
+nonisolated enum ScannerStatus: Equatable, Sendable {
     case disconnected, idle, scanning(progress: Double?, pagesScanned: Int), error(String)
     var displayText: String { switch self { case .disconnected: "No scanner connected"; case .idle: "Ready"; case let .scanning(progress, pages): if let progress { "Scanning \(pages) page\(pages == 1 ? "" : "s") - \(Int(progress * 100))%" } else { "Scanning \(pages) page\(pages == 1 ? "" : "s")" }; case let .error(message): message } }
 }
-struct ScanJobResult: Sendable { let outputURLs: [URL]; let pagesScanned: Int; let outputByteCount: Int64 }
-enum ScannerError: LocalizedError, Equatable {
+nonisolated struct ScanJobResult: Sendable { let outputURLs: [URL]; let pagesScanned: Int; let outputByteCount: Int64 }
+nonisolated enum ScannerError: LocalizedError, Equatable {
     case deviceNotFound, feederEmpty, unsupportedDevice(String), unsupportedOption(String), transportUnavailable(String), protocolNotImplemented(String), scanCancelled, outputFailed(String)
     var errorDescription: String? { switch self { case .deviceNotFound: "No compatible scanner was found."; case .feederEmpty: "The document feeder is empty."; case let .unsupportedDevice(message), let .unsupportedOption(message), let .transportUnavailable(message), let .protocolNotImplemented(message), let .outputFailed(message): message; case .scanCancelled: "The scan was cancelled." } }
 }
 
-struct ScanProfileStore {
+nonisolated struct ScanProfileStore {
     private let defaults: UserDefaults; private let key = "scan.profiles.v2"; private let selectedKey = "scan.selectedProfile"
     init(defaults: UserDefaults) { self.defaults = defaults }
     func load() -> [ScanProfile] { guard let data = defaults.data(forKey: key), let profiles = try? JSONDecoder().decode([ScanProfile].self, from: data), !profiles.isEmpty else { return ScanProfile.defaults }; return migratingFilenameTemplates(profiles) }
@@ -243,7 +243,7 @@ struct ScanProfileStore {
     var selectedProfileID: UUID? { get { defaults.string(forKey: selectedKey).flatMap(UUID.init(uuidString:)) } set { defaults.set(newValue?.uuidString, forKey: selectedKey) } }
 }
 
-struct HardwareButtonSettings: Codable, Equatable, Sendable {
+nonisolated struct HardwareButtonSettings: Codable, Equatable, Sendable {
     /// New installations monitor supported scanner buttons by default. A
     /// saved `false` remains an explicit opt-out across launches.
     var enabled = true
@@ -253,7 +253,7 @@ struct HardwareButtonSettings: Codable, Equatable, Sendable {
     var perScannerDestinationBookmarks: [String: Data] = [:]
 }
 
-struct HardwareButtonSettingsStore {
+nonisolated struct HardwareButtonSettingsStore {
     private let defaults: UserDefaults
     private let key = "scan.hardwareButtonSettings.v1"
 
@@ -295,7 +295,7 @@ struct HardwareButtonSettingsStore {
 /// Persists the default saving location across launches as a security-scoped
 /// bookmark, so the sandboxed app keeps write access to a folder the user
 /// chose. The plain path is kept too, for display and diagnostics.
-struct DestinationFolderStore {
+nonisolated struct DestinationFolderStore {
     private let defaults: UserDefaults
     private let bookmarkKey = "scan.destinationBookmark"
     private let pathKey = "scan.destinationPath"

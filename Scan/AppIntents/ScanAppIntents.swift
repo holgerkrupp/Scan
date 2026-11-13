@@ -12,13 +12,13 @@ struct ScanProfileEntity: AppEntity {
         name = profile.name
     }
 
-    static var typeDisplayRepresentation = TypeDisplayRepresentation(name: "Scan Profile")
+    static let typeDisplayRepresentation = TypeDisplayRepresentation(name: "Scan Profile")
 
     var displayRepresentation: DisplayRepresentation {
         DisplayRepresentation(title: "\(name)")
     }
 
-    static var defaultQuery = ScanProfileEntityQuery()
+    static let defaultQuery = ScanProfileEntityQuery()
 }
 
 struct ScanProfileEntityQuery: EntityQuery {
@@ -39,9 +39,9 @@ struct ScanProfileEntityQuery: EntityQuery {
 }
 
 struct ScanDocumentIntent: AppIntent, LongRunningIntent {
-    static var title: LocalizedStringResource = "Scan Document"
-    static var description = IntentDescription("Scans a document with a saved profile and returns the exported files.")
-    static var openAppWhenRun = true
+    static let title: LocalizedStringResource = "Scan Document"
+    static let description = IntentDescription("Scans a document with a saved profile and returns the exported files.")
+    static let openAppWhenRun = true
 
     @Parameter(title: "Profile")
     var profile: ScanProfileEntity?
@@ -68,9 +68,9 @@ struct ScanDocumentIntent: AppIntent, LongRunningIntent {
 }
 
 struct RefreshScannersIntent: AppIntent {
-    static var title: LocalizedStringResource = "Refresh Scanners"
-    static var description = IntentDescription("Finds connected scanners and updates Scan's device list.")
-    static var openAppWhenRun = true
+    static let title: LocalizedStringResource = "Refresh Scanners"
+    static let description = IntentDescription("Finds connected scanners and updates Scan's device list.")
+    static let openAppWhenRun = true
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let workspace = await MainActor.run { ScannerWorkspaceViewModel.shared }
@@ -82,9 +82,9 @@ struct RefreshScannersIntent: AppIntent {
 }
 
 struct OpenScanWorkspaceIntent: AppIntent {
-    static var title: LocalizedStringResource = "Open Scan"
-    static var description = IntentDescription("Opens the Scan workspace.")
-    static var openAppWhenRun = true
+    static let title: LocalizedStringResource = "Open Scan"
+    static let description = IntentDescription("Opens the Scan workspace.")
+    static let openAppWhenRun = true
 
     func perform() async throws -> some IntentResult & ProvidesDialog {
         .result(dialog: "Opening Scan.")
@@ -92,7 +92,7 @@ struct OpenScanWorkspaceIntent: AppIntent {
 }
 
 struct ScanAppShortcuts: AppShortcutsProvider {
-    static var shortcutTileColor: ShortcutTileColor = .blue
+    static let shortcutTileColor: ShortcutTileColor = .blue
 
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
