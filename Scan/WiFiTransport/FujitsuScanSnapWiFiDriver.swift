@@ -62,7 +62,8 @@ final class VENSScannerDiscovery: ScannerDiscovery {
 
     /// Opening or closing the lid is announced by the scanner.
     func observeChanges(_ onChange: @escaping @MainActor () -> Void) {
-        let defaults = self.defaults
+        // UserDefaults is thread-safe; the notices arrive on the listener's queue.
+        nonisolated(unsafe) let defaults = self.defaults
         VENSNotificationListener.shared.subscribe { [weak self] sender, notification in
             guard notification.event == VENS.powerOnEvent || notification.event == VENS.powerOffEvent else { return }
             Self.remember(sender, in: defaults)
