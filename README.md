@@ -23,6 +23,14 @@ there writes it into the project file, which overrides the configuration files.
 
 ## OCR, document names and destination
 
+**Documents profile.** The first profile, **Documents (best quality)**, is
+made for paper documents: both sides at 300 dpi, **Automatic** color, blank
+pages removed, pages straightened to the sheet and turned upright, and a
+searchable PDF named `{docdate} {type} {subject} {person}`, whose text is
+read in English, German, French and Spanish (the Mac's language first). Existing
+installations get it once at the top of their profiles; the profile in use
+stays selected, and a deleted Documents profile is not added again.
+
 **OCR with ocrmypdf.** Settings ▸ Language and the inspector's
 **Language / OCR** section choose the OCR language (German, English, French,
 Spanish, Italian, Dutch, Polish or Portuguese) and switch on **Run OCR
