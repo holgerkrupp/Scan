@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		48AFC6D63050023C00DE43CB /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 48AFC6D53050023C00DE43CB /* AppIcon.icon */; };
+		48C237D330A9E1D40064CA30 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 48C237D230A9E1D40064CA30 /* Localizable.xcstrings */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -25,6 +26,7 @@
 		48AFC6D53050023C00DE43CB /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		48B000000000000000000001 /* ScanTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ScanTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		48C000000000000000000001 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
+		48C237D230A9E1D40064CA30 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -61,6 +63,7 @@
 		48015C2F2FD2A43D0015BF09 = {
 			isa = PBXGroup;
 			children = (
+				48C237D230A9E1D40064CA30 /* Localizable.xcstrings */,
 				48AFC6D53050023C00DE43CB /* AppIcon.icon */,
 				48015C3A2FD2A43D0015BF09 /* Scan */,
 				48B000000000000000000002 /* ScanTests */,
@@ -157,6 +160,16 @@
 			knownRegions = (
 				en,
 				Base,
+				de,
+				fr,
+				es,
+				ko,
+				nl,
+				it,
+				pt,
+				ja,
+				tr,
+				ar,
 			);
 			mainGroup = 48015C2F2FD2A43D0015BF09;
 			minimizedProjectReferenceProxies = 1;
@@ -176,6 +189,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				48C237D330A9E1D40064CA30 /* Localizable.xcstrings in Resources */,
 				48AFC6D63050023C00DE43CB /* AppIcon.icon in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -276,6 +290,7 @@
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
 			name = Debug;
@@ -334,6 +349,7 @@
 				MTL_FAST_MATH = YES;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
 			};
 			name = Release;
 		};
