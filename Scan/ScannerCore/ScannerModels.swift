@@ -154,6 +154,31 @@ nonisolated struct ExportSettings: Hashable, Sendable, Codable {
     static let previousDefaultFilenameTemplate = "Scan-{date}-{page}"
     var ocrLanguages: [String] = ["en-US"]
     var automaticallySaveAfterScanning = true
+    /// Patterns for `{date}`/`{docdate}` and `{time}`, in `DateFormatter`
+    /// notation; an empty one uses the default.
+    var dateFormat = ExportSettings.defaultDateFormat
+    var timeFormat = ExportSettings.defaultTimeFormat
+    static let defaultDateFormat = "yyyy-MM-dd"
+    static let defaultTimeFormat = "HH-mm-ss"
+}
+
+nonisolated extension ExportSettings {
+    // Profiles saved before a field existed must keep decoding. Being in an
+    // extension, this initializer leaves the memberwise one in place.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init()
+        outputFormat = try container.decodeIfPresent(ScanOutputFormat.self, forKey: .outputFormat) ?? outputFormat
+        sizePreset = try container.decodeIfPresent(ScanFileSizePreset.self, forKey: .sizePreset) ?? sizePreset
+        outputDPI = try container.decodeIfPresent(Int.self, forKey: .outputDPI) ?? outputDPI
+        jpegQuality = try container.decodeIfPresent(Double.self, forKey: .jpegQuality) ?? jpegQuality
+        exportMode = try container.decodeIfPresent(ScanExportMode.self, forKey: .exportMode) ?? exportMode
+        filenameTemplate = try container.decodeIfPresent(String.self, forKey: .filenameTemplate) ?? filenameTemplate
+        ocrLanguages = try container.decodeIfPresent([String].self, forKey: .ocrLanguages) ?? ocrLanguages
+        automaticallySaveAfterScanning = try container.decodeIfPresent(Bool.self, forKey: .automaticallySaveAfterScanning) ?? automaticallySaveAfterScanning
+        dateFormat = try container.decodeIfPresent(String.self, forKey: .dateFormat) ?? dateFormat
+        timeFormat = try container.decodeIfPresent(String.self, forKey: .timeFormat) ?? timeFormat
+    }
 }
 
 nonisolated struct ScanOptions: Hashable, Sendable, Codable {

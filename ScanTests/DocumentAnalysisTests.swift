@@ -92,12 +92,36 @@ import XCTest
         XCTAssertTrue(DocumentAnalysis.isRealSubject("Assurance habitation"))
     }
 
+    /// 2026-11-09 10:00:00 in the Mac's time zone.
+    private let exportDate = DateComponents(calendar: Calendar(identifier: .gregorian), year: 2026, month: 11, day: 9, hour: 10).date!
+
+    private func name(_ template: String, _ naming: DocumentNaming = DocumentNaming(), dateFormat: String = ExportSettings.defaultDateFormat, timeFormat: String = ExportSettings.defaultTimeFormat) -> String {
+        ScanOutputWriter.renderName(ExportSettings(filenameTemplate: template, dateFormat: dateFormat, timeFormat: timeFormat), date: exportDate, naming: naming, page: nil, side: nil)
+    }
+
     func testEmptyTokensLeaveNoDoubledSeparators() {
         let naming = DocumentNaming(name: nil, metadata: DocumentMetadata(date: "2026-03-12", sender: "Stadtwerke", type: "Rechnung", subject: "", person: ""))
-        XCTAssertEqual(ScanOutputWriter.renderName("{docdate} {sender} {type} {subject} {person}", date: "2026-11-09", time: "10-00-00", naming: naming, page: nil, side: nil), "2026-03-12 Stadtwerke Rechnung")
-        XCTAssertEqual(ScanOutputWriter.renderName("{docdate}-{type}-{subject}", date: "2026-11-09", time: "10-00-00", naming: naming, page: nil, side: nil), "2026-03-12-Rechnung")
-        XCTAssertEqual(ScanOutputWriter.renderName("{date}-{time}-{name}", date: "2026-11-09", time: "10-00-00", naming: DocumentNaming(), page: nil, side: nil), "2026-11-09-10-00-00-Scan")
-        XCTAssertEqual(ScanOutputWriter.renderName("{docdate} {subject}", date: "2026-11-09", time: "10-00-00", naming: DocumentNaming(), page: nil, side: nil), "2026-11-09")
+        XCTAssertEqual(name("{docdate} {sender} {type} {subject} {person}", naming), "2026-03-12 Stadtwerke Rechnung")
+        XCTAssertEqual(name("{docdate}-{type}-{subject}", naming), "2026-03-12-Rechnung")
+        XCTAssertEqual(name("{date}-{time}-{name}"), "2026-11-09-10-00-00-Scan")
+        XCTAssertEqual(name("{docdate} {subject}"), "2026-11-09")
+    }
+
+    func testDateAndTimeFormatsShapeTheFileName() {
+        let naming = DocumentNaming(name: nil, metadata: DocumentMetadata(date: "2024-03-07", type: "Rechnung"))
+        XCTAssertEqual(name("{docdate} {date} {time}", naming, dateFormat: "dd.MM.yyyy", timeFormat: "HH'h'mm"), "07.03.2024 09.11.2026 10h00")
+        XCTAssertEqual(name("{docdate}_{type}", naming, dateFormat: "yyyyMMdd"), "20240307_Rechnung")
+        XCTAssertEqual(name("{date} {time}", dateFormat: " ", timeFormat: ""), "2026-11-09 10-00-00", "an empty format uses the default")
+    }
+
+    func testProfilesSavedWithoutDateFormatsStillLoad() throws {
+        var saved = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(ExportSettings(filenameTemplate: "Mine-{date}"))) as? [String: Any])
+        saved.removeValue(forKey: "dateFormat")
+        saved.removeValue(forKey: "timeFormat")
+        let decoded = try JSONDecoder().decode(ExportSettings.self, from: JSONSerialization.data(withJSONObject: saved))
+        XCTAssertEqual(decoded.filenameTemplate, "Mine-{date}")
+        XCTAssertEqual(decoded.dateFormat, ExportSettings.defaultDateFormat)
+        XCTAssertEqual(decoded.timeFormat, ExportSettings.defaultTimeFormat)
     }
 
     func testSettingsSavedBeforeThePeopleListStillLoad() throws {

@@ -71,6 +71,11 @@ The template also knows `{docdate}`, `{sender}`, `{type}`, `{subject}` and
 - `{person}` is the first entry of the **People** list (Settings ▸ Language)
   whose name appears in the text, e.g. `Anna = Anna Schmidt, Schmidt Anna`.
 
+**Date format** and **Time format**, next to the template, shape `{date}`,
+`{docdate}` and `{time}` with `DateFormatter` patterns, such as `dd.MM.yyyy`
+or `yyyyMMdd`; they are kept per profile and default to `yyyy-MM-dd` and
+`HH-mm-ss`.
+
 **Destination.** The inspector's **Destination** section shows the folder
 scans are saved to, with **Choose…**, **Show** and **Reset**. The choice is
 kept across launches as a security-scoped bookmark.

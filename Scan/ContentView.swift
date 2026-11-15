@@ -261,6 +261,9 @@ struct ContentView: View {
                     }
                 }
                 TextField("Filename template", text: profileString(\.options.export.filenameTemplate)); Text("Tokens: {date}, {time}, {name}, {docdate}, {sender}, {type}, {subject}, {person}, {page}, {side}").font(.caption).foregroundStyle(.secondary)
+                TextField("Date format", text: profileString(\.options.export.dateFormat), prompt: Text(verbatim: ExportSettings.defaultDateFormat))
+                TextField("Time format", text: profileString(\.options.export.timeFormat), prompt: Text(verbatim: ExportSettings.defaultTimeFormat))
+                Text("For {date}, {docdate} and {time}: yyyy = year, MM = month, dd = day, HH = hour, mm = minute, ss = second; for example dd.MM.yyyy. Empty uses the default.").font(.caption).foregroundStyle(.secondary)
                 if viewModel.selectedProfile.options.export.filenameTemplate.contains("{name}") {
                     if let reason = FoundationModelNameSuggester.unavailableReason { Text("\(reason) {name} becomes \"\(DocumentName.fallback)\".").font(.caption).foregroundStyle(.orange) }
                     else { Text("{name} is proposed on this Mac by Apple Intelligence from the text of the first pages.").font(.caption).foregroundStyle(.secondary) }

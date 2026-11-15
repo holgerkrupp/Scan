@@ -49,10 +49,10 @@ final class ScanOutputWriter {
     /// applied here and the export matches what the grid shows.
     func write(pages: [StoredPage], options: ScanOptions, destinationFolder: URL, ocrLanguage: OCRLanguage = .german, people: String = "") async throws -> ScanJobResult {
         try FileManager.default.createDirectory(at: destinationFolder, withIntermediateDirectories: true)
-        let date = Self.dateFormatter.string(from: Date())
+        let date = Date()
         let documentName = await documentNaming(for: options.export.filenameTemplate, language: ocrLanguage, people: people, frames: pages.map { page in { try self.process(page, options: options) } })
         if (options.export.outputFormat == .pdf || options.export.outputFormat == .searchablePDF) && options.export.exportMode == .combinedPDF {
-            let url = uniqueURL(folder: destinationFolder, name: renderName(options.export.filenameTemplate, date: date, name: documentName, page: nil, side: nil), ext: "pdf")
+            let url = uniqueURL(folder: destinationFolder, name: Self.renderName(options.export, date: date, naming: documentName, page: nil, side: nil), ext: "pdf")
             guard let consumer = CGDataConsumer(url: url as CFURL), let context = CGContext(consumer: consumer, mediaBox: nil, nil) else { throw ScannerError.outputFailed("Could not write PDF to \(url.path).") }
             var count = 0
             let searchable = options.export.outputFormat == .searchablePDF
@@ -78,7 +78,7 @@ final class ScanOutputWriter {
             guard let frame = try process(page, options: options) else { continue }
             let ext: String
             switch options.export.outputFormat { case .pdf, .searchablePDF: ext = "pdf"; case .jpeg: ext = "jpg"; case .png: ext = "png"; case .tiff: ext = "tiff" }
-            let url = uniqueURL(folder: destinationFolder, name: renderName(options.export.filenameTemplate, date: date, name: documentName, page: count + 1, side: frame.side.rawValue), ext: ext)
+            let url = uniqueURL(folder: destinationFolder, name: Self.renderName(options.export, date: date, naming: documentName, page: count + 1, side: frame.side.rawValue), ext: ext)
             switch options.export.outputFormat {
             case .pdf, .searchablePDF: try await writePDF(frames: [frame], to: url, searchable: options.export.outputFormat == .searchablePDF, options: options)
             case .jpeg: try encode(frame: frame, to: url, type: .jpeg, quality: options.export.jpegQuality)
@@ -108,10 +108,10 @@ final class ScanOutputWriter {
     private func writeProcessed(_ frames: [PageFrame], options: ScanOptions, destinationFolder: URL, ocrLanguage: OCRLanguage, people: String) async throws -> ScanJobResult {
         guard !frames.isEmpty else { throw ScannerError.outputFailed("No non-blank pages were received from the scanner.") }
         try FileManager.default.createDirectory(at: destinationFolder, withIntermediateDirectories: true)
-        let date = Self.dateFormatter.string(from: Date())
+        let date = Date()
         let documentName = await documentNaming(for: options.export.filenameTemplate, language: ocrLanguage, people: people, frames: frames.map { frame in { frame } })
         if (options.export.outputFormat == .pdf || options.export.outputFormat == .searchablePDF) && options.export.exportMode == .combinedPDF {
-            let url = uniqueURL(folder: destinationFolder, name: renderName(options.export.filenameTemplate, date: date, name: documentName, page: nil, side: nil), ext: "pdf")
+            let url = uniqueURL(folder: destinationFolder, name: Self.renderName(options.export, date: date, naming: documentName, page: nil, side: nil), ext: "pdf")
             try await writePDF(frames: frames, to: url, searchable: options.export.outputFormat == .searchablePDF, options: options)
             return ScanJobResult(outputURLs: [url], pagesScanned: frames.count, outputByteCount: fileSize(url))
         }
@@ -120,7 +120,7 @@ final class ScanOutputWriter {
         for (index, frame) in frames.enumerated() {
             let ext: String
             switch options.export.outputFormat { case .pdf, .searchablePDF: ext = "pdf"; case .jpeg: ext = "jpg"; case .png: ext = "png"; case .tiff: ext = "tiff" }
-            let name = renderName(options.export.filenameTemplate, date: date, name: documentName, page: index + 1, side: frame.side.rawValue)
+            let name = Self.renderName(options.export, date: date, naming: documentName, page: index + 1, side: frame.side.rawValue)
             let url = uniqueURL(folder: destinationFolder, name: name, ext: ext)
             switch options.export.outputFormat {
             case .pdf, .searchablePDF: try await writePDF(frames: [frame], to: url, searchable: options.export.outputFormat == .searchablePDF, options: options)
@@ -212,10 +212,15 @@ final class ScanOutputWriter {
         return naming
     }
 
-    static func renderName(_ template: String, date: String, time: String, naming: DocumentNaming, page: Int?, side: String?) -> String {
+    /// `{date}` and `{time}` come from `date`, `{docdate}` from the document
+    /// when its date was found; all use the profile's date and time formats.
+    static func renderName(_ export: ExportSettings, date: Date, naming: DocumentNaming, page: Int?, side: String?) -> String {
         let metadata = naming.metadata ?? DocumentMetadata()
-        var value = template
-        for (token, text) in [("{date}", date), ("{time}", time), ("{name}", naming.name ?? DocumentName.fallback), ("{docdate}", metadata.date.isEmpty ? date : metadata.date), ("{sender}", metadata.sender), ("{type}", metadata.type), ("{subject}", metadata.subject), ("{person}", metadata.person), ("{page}", page.map { String(format: "%03d", $0) } ?? "batch"), ("{side}", side ?? "all")] {
+        let day = text(for: date, pattern: export.dateFormat, fallback: ExportSettings.defaultDateFormat)
+        let time = text(for: date, pattern: export.timeFormat, fallback: ExportSettings.defaultTimeFormat)
+        let documentDate = documentDay(metadata.date).map { text(for: $0, pattern: export.dateFormat, fallback: ExportSettings.defaultDateFormat) } ?? day
+        var value = export.filenameTemplate
+        for (token, text) in [("{date}", day), ("{time}", time), ("{name}", naming.name ?? DocumentName.fallback), ("{docdate}", documentDate), ("{sender}", metadata.sender), ("{type}", metadata.type), ("{subject}", metadata.subject), ("{person}", metadata.person), ("{page}", page.map { String(format: "%03d", $0) } ?? "batch"), ("{side}", side ?? "all")] {
             value = value.replacingOccurrences(of: token, with: text)
         }
         // A token that stayed empty must not leave doubled separators behind.
@@ -224,13 +229,21 @@ final class ScanOutputWriter {
         return safe.isEmpty ? "Scan" : safe
     }
 
-    private func renderName(_ template: String, date: String, name: DocumentNaming, page: Int?, side: String?) -> String {
-        Self.renderName(template, date: date, time: Self.timeFormatter.string(from: Date()), naming: name, page: page, side: side)
+    private static func text(for date: Date, pattern: String, fallback: String) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.dateFormat = pattern.trimmingCharacters(in: .whitespaces).isEmpty ? fallback : pattern
+        return formatter.string(from: date)
+    }
+
+    /// `DocumentMetadata.date` is `yyyy-MM-dd`; noon keeps the day in every time zone.
+    private static func documentDay(_ iso: String) -> Date? {
+        let parts = iso.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return nil }
+        return Calendar(identifier: .gregorian).date(from: DateComponents(year: parts[0], month: parts[1], day: parts[2], hour: 12))
     }
     private func uniqueURL(folder: URL, name: String, ext: String) -> URL { var url = folder.appendingPathComponent("\(name).\(ext)"); var counter = 2; while FileManager.default.fileExists(atPath: url.path) { url = folder.appendingPathComponent("\(name)-\(counter).\(ext)"); counter += 1 }; return url }
     private func fileSize(_ url: URL) -> Int64 { (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0 }
-    private static let dateFormatter: DateFormatter = { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f }()
-    private static let timeFormatter: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HH-mm-ss"; return f }()
 }
 
 private struct RecognizedTextLine: Sendable { let text: String; let normalizedBounds: CGRect }
