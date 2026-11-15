@@ -71,6 +71,23 @@ final class ScanOutputWriter {
             guard count > 0 else { try? FileManager.default.removeItem(at: url); throw ScannerError.outputFailed("There are no pages to export.") }
             return ScanJobResult(outputURLs: [url], pagesScanned: count, outputByteCount: fileSize(url))
         }
+        if options.export.outputFormat == .pdf || options.export.outputFormat == .searchablePDF, options.export.exportMode == .separateSheets {
+            // Only one sheet's pages are in memory at a time.
+            var urls: [URL] = []; var count = 0; var bytes: Int64 = 0
+            for sheet in Self.sheets(pages, side: \.side) {
+                var frames: [PageFrame] = []
+                for page in sheet {
+                    onProgress?(.writingPage(page: count + frames.count + 1, of: pages.count, recognizingText: options.export.outputFormat == .searchablePDF))
+                    if let frame = try process(page, options: options) { frames.append(frame) }
+                }
+                guard !frames.isEmpty else { continue }
+                let url = uniqueURL(folder: destinationFolder, name: Self.renderName(options.export, date: date, naming: documentName, page: urls.count + 1, side: Self.sheetSide(frames)), ext: "pdf")
+                try await writePDF(frames: frames, to: url, searchable: options.export.outputFormat == .searchablePDF, options: options)
+                count += frames.count; bytes += fileSize(url); urls.append(url)
+            }
+            guard count > 0 else { throw ScannerError.outputFailed("No non-blank pages were received from the scanner.") }
+            return ScanJobResult(outputURLs: urls, pagesScanned: count, outputByteCount: bytes)
+        }
 
         var urls: [URL] = []; var count = 0; var bytes: Int64 = 0
         for (index, page) in pages.enumerated() {
@@ -90,6 +107,24 @@ final class ScanOutputWriter {
         guard count > 0 else { throw ScannerError.outputFailed("No non-blank pages were received from the scanner.") }
         return ScanJobResult(outputURLs: urls, pagesScanned: count, outputByteCount: bytes)
     }
+
+    /// The pages grouped by sheet: a front starts a sheet and the back right
+    /// after it joins it. A side left alone (its other side was blank and
+    /// removed, or the scan was single-sided) makes a sheet of its own.
+    static func sheets<Page>(_ pages: [Page], side: (Page) -> PageSide) -> [[Page]] {
+        var sheets: [[Page]] = []
+        for page in pages {
+            if side(page) == .back, let last = sheets.last, last.count == 1, side(last[0]) == .front {
+                sheets[sheets.count - 1].append(page)
+            } else {
+                sheets.append([page])
+            }
+        }
+        return sheets
+    }
+
+    /// `{side}` of a sheet's file: its side when it has only one, else nil ("all").
+    private static func sheetSide(_ sheet: [PageFrame]) -> String? { sheet.count == 1 ? sheet[0].side.rawValue : nil }
 
     private func process(_ page: StoredPage, options: ScanOptions) throws -> PageFrame? {
         let frame = PageFrame(id: page.id, pageIndex: page.pageIndex, side: page.side, pixelFormat: page.pixelFormat, width: page.width, height: page.height, resolutionDPI: page.resolutionDPI, data: try Data(contentsOf: page.fileURL, options: .mappedIfSafe))
@@ -114,6 +149,15 @@ final class ScanOutputWriter {
             let url = uniqueURL(folder: destinationFolder, name: Self.renderName(options.export, date: date, naming: documentName, page: nil, side: nil), ext: "pdf")
             try await writePDF(frames: frames, to: url, searchable: options.export.outputFormat == .searchablePDF, options: options)
             return ScanJobResult(outputURLs: [url], pagesScanned: frames.count, outputByteCount: fileSize(url))
+        }
+        if options.export.outputFormat == .pdf || options.export.outputFormat == .searchablePDF, options.export.exportMode == .separateSheets {
+            var urls: [URL] = []
+            for (index, sheet) in Self.sheets(frames, side: \.side).enumerated() {
+                let url = uniqueURL(folder: destinationFolder, name: Self.renderName(options.export, date: date, naming: documentName, page: index + 1, side: Self.sheetSide(sheet)), ext: "pdf")
+                try await writePDF(frames: sheet, to: url, searchable: options.export.outputFormat == .searchablePDF, options: options)
+                urls.append(url)
+            }
+            return ScanJobResult(outputURLs: urls, pagesScanned: frames.count, outputByteCount: urls.reduce(0) { $0 + fileSize($1) })
         }
 
         var urls: [URL] = []

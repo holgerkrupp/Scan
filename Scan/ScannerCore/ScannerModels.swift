@@ -41,7 +41,7 @@ nonisolated enum ScanSource: String, CaseIterable, Identifiable, Sendable, Codab
 /// `automatic` scans in color and keeps color only on the pages that have some.
 nonisolated enum ScanColorMode: String, CaseIterable, Identifiable, Sendable, Codable { case automatic = "Automatic"; case color = "Color"; case gray = "Gray"; case lineart = "Lineart"; var id: String { rawValue } }
 nonisolated enum ScanOutputFormat: String, CaseIterable, Identifiable, Sendable, Codable { case pdf = "PDF"; case searchablePDF = "Searchable PDF"; case jpeg = "JPEG"; case png = "PNG"; case tiff = "TIFF"; var id: String { rawValue } }
-nonisolated enum ScanExportMode: String, CaseIterable, Identifiable, Sendable, Codable { case combinedPDF = "One combined PDF"; case separateFiles = "Separate per-page files"; var id: String { rawValue } }
+nonisolated enum ScanExportMode: String, CaseIterable, Identifiable, Sendable, Codable { case combinedPDF = "One combined PDF"; case separateSheets = "One file per sheet"; case separateFiles = "Separate per-page files"; var id: String { rawValue } }
 
 nonisolated enum ScanFileSizePreset: String, CaseIterable, Identifiable, Sendable, Codable {
     case small = "Small", balanced = "Balanced", highQuality = "High Quality", lossless = "Lossless", custom = "Custom"
