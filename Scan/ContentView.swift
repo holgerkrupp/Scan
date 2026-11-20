@@ -234,6 +234,17 @@ struct ContentView: View {
                         .disabled(viewModel.destinationFolder.standardizedFileURL == DestinationFolderStore.defaultFolder.standardizedFileURL)
                         .help("Use the default folder \(DestinationFolderStore.defaultFolder.path)")
                 }
+                LabeledContent("Open with") {
+                    if let app = viewModel.openWithAppURL { Text(app.deletingPathExtension().lastPathComponent).lineLimit(1).truncationMode(.middle) }
+                    else if viewModel.openWithBundleID != nil { Text("App not found").foregroundStyle(.orange) }
+                    else { Text("No app") }
+                }
+                HStack {
+                    Button { viewModel.chooseOpenWithApp() } label: { Label("Choose App…", systemImage: "app.badge") }
+                    Spacer()
+                    Button("Don't Open") { viewModel.openWithBundleID = nil }.disabled(viewModel.openWithBundleID == nil)
+                }
+                Text("Each saved file opens in this app, after OCR if it runs, for example to import it into a document manager.").font(.caption).foregroundStyle(.secondary)
             }
             Section("Language / OCR") {
                 Picker("OCR language", selection: $viewModel.ocrSettings.language) {

@@ -3,6 +3,7 @@ import Foundation
 import Observation
 import ServiceManagement
 import SwiftUI
+import UniformTypeIdentifiers
 import UserNotifications
 
 @MainActor
@@ -296,6 +297,10 @@ final class ScannerWorkspaceViewModel {
     /// Settings ▸ Language: default OCR language and the ocrmypdf switch.
     var ocrSettings: OCRSettings { didSet { ocrSettingsStore.save(ocrSettings) } }
     private let ocrSettingsStore = OCRSettingsStore(defaults: .standard)
+    /// The app each saved file is opened in, such as a document manager
+    /// that files it; nil opens nothing.
+    var openWithBundleID: String? = UserDefaults.standard.string(forKey: ScannerWorkspaceViewModel.openWithKey) { didSet { UserDefaults.standard.set(openWithBundleID, forKey: Self.openWithKey) } }
+    private static let openWithKey = "scan.openWithBundleID"
     /// True while ocrmypdf runs on the last export.
     var isRunningOCR = false
     /// Set while an export runs its OCR and AI steps; nil otherwise.
@@ -731,7 +736,7 @@ final class ScannerWorkspaceViewModel {
         let startedAt = Date()
         outputWriter.onProgress = { [weak self] progress in self?.postScanActivity = .step(progress, startedAt: startedAt) }
         defer { outputWriter.onProgress = nil; postScanActivity = nil }
-        do { let result = try await outputWriter.write(pages: pages, options: selectedProfile.options, destinationFolder: destinationOverride ?? destinationFolder, ocrLanguage: ocrSettings.language, people: ocrSettings.people); lastOutputs = result.outputURLs; lastOutputByteCount = result.outputByteCount; status = .idle; log("Exported \(result.pagesScanned) page\(result.pagesScanned == 1 ? "" : "s") (\(ByteCountFormatter.string(fromByteCount: result.outputByteCount, countStyle: .file)))."); await runOCRmyPDFIfEnabled(on: result.outputURLs, startedAt: startedAt)
+        do { let result = try await outputWriter.write(pages: pages, options: selectedProfile.options, destinationFolder: destinationOverride ?? destinationFolder, ocrLanguage: ocrSettings.language, people: ocrSettings.people); lastOutputs = result.outputURLs; lastOutputByteCount = result.outputByteCount; status = .idle; log("Exported \(result.pagesScanned) page\(result.pagesScanned == 1 ? "" : "s") (\(ByteCountFormatter.string(fromByteCount: result.outputByteCount, countStyle: .file)))."); await runOCRmyPDFIfEnabled(on: result.outputURLs, startedAt: startedAt); openInChosenApp(result.outputURLs)
             statisticsStore.append(ScanRecord(date: Date(), scannerID: lastScanScannerID ?? selectedIdentity?.id ?? "unknown", kind: .export, pages: result.pagesScanned, files: result.outputURLs.count, bytes: lastOutputByteCount)) }
         catch { status = .error(error.localizedDescription); log("Export failed: \(error.localizedDescription)") }
     }
@@ -782,6 +787,30 @@ final class ScannerWorkspaceViewModel {
         } catch {
             status = .error(error.localizedDescription)
             log("OCR failed: \(error.localizedDescription)")
+        }
+    }
+
+    var openWithAppURL: URL? { openWithBundleID.flatMap { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) } }
+
+    func chooseOpenWithApp() {
+        let panel = NSOpenPanel(); panel.canChooseFiles = true; panel.canChooseDirectories = false; panel.allowsMultipleSelection = false; panel.allowedContentTypes = [.application]; panel.prompt = "Use App"
+        panel.directoryURL = openWithAppURL?.deletingLastPathComponent() ?? URL(fileURLWithPath: "/Applications", isDirectory: true)
+        panel.title = "Choose an App to Open Scans"
+        panel.message = "Each saved file will be opened in this app."
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard let bundleID = Bundle(url: url)?.bundleIdentifier else { status = .error("\(url.lastPathComponent) cannot be used to open scans."); return }
+        openWithBundleID = bundleID
+        log("Saved files will open in \(url.deletingPathExtension().lastPathComponent).")
+    }
+
+    /// Opens the saved files in the app chosen in the inspector, after OCR
+    /// has finished with them. A failure is only logged: the files are saved.
+    private func openInChosenApp(_ outputs: [URL]) {
+        guard let bundleID = openWithBundleID, !outputs.isEmpty else { return }
+        guard let app = openWithAppURL else { log("The app chosen to open scans (\(bundleID)) was not found."); return }
+        Task {
+            do { _ = try await NSWorkspace.shared.open(outputs, withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) }
+            catch { log("Could not open the saved files in \(app.deletingPathExtension().lastPathComponent): \(error.localizedDescription)") }
         }
     }
 
