@@ -77,7 +77,7 @@ struct ContentView: View {
             if viewModel.isScanning {
                 Button(role: .cancel) { Task { await viewModel.cancelScan() } } label: { Label("Cancel", systemImage: "xmark.circle").labelStyle(.titleAndIcon) }
             } else {
-                let scanButton = Button { Task { await viewModel.startScan() } } label: { Label("Scan", systemImage: "scanner").labelStyle(.titleAndIcon) }
+                let scanButton = Button { Task { await viewModel.startScan() } } label: { Label { Text("Scan") } icon: { Image("ScannerSheetFed").resizable().scaledToFit().frame(width: 17, height: 17) }.labelStyle(.titleAndIcon) }
                 // Prominent only when it can be used: a disabled prominent button renders washed out.
                 if viewModel.selectedIdentity == nil || viewModel.postScanActivity != nil {
                     scanButton.buttonStyle(.glass).disabled(true)
@@ -91,7 +91,7 @@ struct ContentView: View {
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("Scanners", systemImage: "scanner").font(.headline)
+                Label { Text("Scanners") } icon: { Image("ScannerSheetFed").resizable().scaledToFit().frame(width: 18, height: 18) }.font(.headline)
                 Spacer()
                 Button { showingDocumentation = true } label: { Image(systemName: "questionmark.circle") }
                     .buttonStyle(.plain)
@@ -168,22 +168,22 @@ struct ContentView: View {
     /// and elapsed time as `PostScanActivity` reports.
     private var activity: ActivityStatus.Content {
         if case let .scanning(progress, _) = viewModel.status {
-            return .init(symbol: "scanner", tint: .accentColor, title: Text(viewModel.status.displayText), fraction: progress, isWorking: true)
+            return .init(symbol: .scanner, tint: .accentColor, title: Text(viewModel.status.displayText), fraction: progress, isWorking: true)
         }
         if viewModel.pendingProcessingCount > 0 {
-            return .init(symbol: "photo.on.rectangle", tint: .accentColor, title: Text("Processing \(viewModel.pendingProcessingCount)…"), isWorking: true)
+            return .init(symbol: .system("photo.on.rectangle"), tint: .accentColor, title: Text("Processing \(viewModel.pendingProcessingCount)…"), isWorking: true)
         }
         if let activity = viewModel.postScanActivity {
-            return .init(symbol: activity.symbol, tint: .accentColor, title: Text(activity.title), detail: Text(activity.detail), fraction: activity.fraction, startedAt: activity.startedAt, isWorking: true)
+            return .init(symbol: .system(activity.symbol), tint: .accentColor, title: Text(activity.title), detail: Text(activity.detail), fraction: activity.fraction, startedAt: activity.startedAt, isWorking: true)
         }
         if case let .error(message) = viewModel.status {
-            return .init(symbol: "exclamationmark.octagon.fill", tint: .red, title: Text(message))
+            return .init(symbol: .system("exclamationmark.octagon.fill"), tint: .red, title: Text(message))
         }
         if let first = viewModel.lastOutputs.first {
             let files = viewModel.lastOutputs.count == 1 ? Text(first.lastPathComponent) : Text("Files: \(viewModel.lastOutputs.count)")
-            return .init(symbol: "checkmark.circle.fill", tint: .green, title: Text("Finished"), detail: files)
+            return .init(symbol: .system("checkmark.circle.fill"), tint: .green, title: Text("Finished"), detail: files)
         }
-        return .init(symbol: "scanner", tint: viewModel.status == .disconnected ? .secondary : .green, title: Text(viewModel.status.displayText), isEmphasized: false)
+        return .init(symbol: .scanner, tint: viewModel.status == .disconnected ? .secondary : .green, title: Text(viewModel.status.displayText), isEmphasized: false)
     }
 
     private var thumbnailSizeSlider: some View {
@@ -467,8 +467,11 @@ private struct ActivityLogView: View {
 /// that pulses while work goes on, the step, its detail, and during an export
 /// a small progress bar and the elapsed time.
 struct ActivityStatus: View {
+    /// The scanner drawing from the asset catalog, or an SF Symbol.
+    enum Symbol { case scanner, system(String) }
+
     struct Content {
-        var symbol: String
+        var symbol: Symbol
         var tint: Color
         var title: Text
         var detail: Text? = nil
@@ -483,7 +486,8 @@ struct ActivityStatus: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: content.symbol)
+            symbol
+                .frame(width: 16, height: 16)
                 .foregroundStyle(content.tint)
                 .symbolEffect(.pulse, isActive: content.isWorking)
             content.title
@@ -503,5 +507,12 @@ struct ActivityStatus: View {
         }
         .help(content.detail ?? content.title)
         .accessibilityElement(children: .combine)
+    }
+
+    @ViewBuilder private var symbol: some View {
+        switch content.symbol {
+        case .scanner: Image("ScannerSheetFed").resizable().scaledToFit()
+        case let .system(name): Image(systemName: name)
+        }
     }
 }
