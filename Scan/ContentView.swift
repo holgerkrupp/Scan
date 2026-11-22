@@ -4,6 +4,8 @@ import SwiftUI
 struct ContentView: View {
     @State private var viewModel = ScannerWorkspaceViewModel.shared
     @State private var showingDocumentation = false
+    @State private var showingActivityLog = false
+    @AppStorage("scan.showsSettingsPanel") private var showsSettingsPanel = true
     /// Scanner whose details sheet is open; set by double-clicking it in the sidebar.
     @State private var scannerDetails: ScannerDetails?
     /// Thumbnail width chosen with the slider next to "Reveal in Finder".
@@ -15,12 +17,23 @@ struct ContentView: View {
         NavigationSplitView {
             sidebar
         } detail: {
-            HStack(spacing: 0) {
-                preview
-                Divider()
-                inspector
-            }
-            .navigationSubtitle(viewModel.aiFilenameSubtitle ?? "")
+            preview
+                .safeAreaBar(edge: .bottom) { statusBar }
+                .navigationSubtitle(viewModel.aiFilenameSubtitle ?? "")
+                .toolbar { toolbar }
+        }
+        // On the split view rather than its detail, so the inspector runs the full window height.
+        .inspector(isPresented: $showsSettingsPanel) {
+            inspector
+                .inspectorColumnWidth(min: 320, ideal: 370, max: 460)
+                // SwiftUI keeps this item at the far right even while the inspector is closed.
+                .toolbar {
+                    ToolbarSpacer(.flexible)
+                    ToolbarItem(placement: .primaryAction) {
+                        Button { showsSettingsPanel.toggle() } label: { Label("Settings", systemImage: "sidebar.right") }
+                            .help("Show or hide the settings panel")
+                    }
+                }
         }
         .task { await viewModel.refreshDevices() }
         .onReceive(NotificationCenter.default.publisher(for: .scanShowDocumentation)) { _ in
@@ -29,11 +42,50 @@ struct ContentView: View {
         .sheet(isPresented: $showingDocumentation) {
             ScanDocumentationView()
         }
+        .sheet(isPresented: $showingActivityLog) {
+            ActivityLogView(viewModel: viewModel)
+        }
         .sheet(item: $scannerDetails) { details in
             ScannerDetailsView(details: details)
         }
-        // Must fit the widest sidebar (380) plus preview (420) and inspector (370); otherwise the split view overflows and is centred, clipping the sidebar.
-        .frame(minWidth: 1180, minHeight: 760)
+        .frame(minWidth: 760, minHeight: 520)
+    }
+
+    @ToolbarContentBuilder private var toolbar: some ToolbarContent {
+        ToolbarSpacer(.flexible, placement: .primaryAction)
+        ToolbarItemGroup(placement: .primaryAction) {
+            Button { Task { await viewModel.rotateSelectedPage() } } label: { Label("Rotate", systemImage: "rotate.right") }
+                .disabled(viewModel.selectedPageID == nil)
+                .help("Rotate the selected page")
+            Button(role: .destructive) { Task { await viewModel.deleteSelectedPage() } } label: { Label("Delete", systemImage: "trash") }
+                .disabled(viewModel.selectedPageID == nil)
+                .help("Delete the selected page")
+            Button { Task { await viewModel.clearPages() } } label: { Label("Clear", systemImage: "xmark.circle") }
+                .disabled(viewModel.pages.isEmpty && viewModel.lastOutputs.isEmpty)
+                .help("Remove all pages")
+        }
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+        ToolbarItemGroup(placement: .primaryAction) {
+            Button { viewModel.revealInFinder() } label: { Label("Reveal in Finder", systemImage: "folder") }
+                .disabled(viewModel.lastOutputs.isEmpty)
+                .help("Reveal in Finder")
+            Button { Task { await viewModel.saveExport() } } label: { Label("Save/Export", systemImage: "square.and.arrow.down").labelStyle(.titleAndIcon) }
+                .disabled(viewModel.pages.isEmpty || viewModel.isScanning || viewModel.postScanActivity != nil)
+        }
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+        ToolbarItem(placement: .primaryAction) {
+            if viewModel.isScanning {
+                Button(role: .cancel) { Task { await viewModel.cancelScan() } } label: { Label("Cancel", systemImage: "xmark.circle").labelStyle(.titleAndIcon) }
+            } else {
+                let scanButton = Button { Task { await viewModel.startScan() } } label: { Label("Scan", systemImage: "scanner").labelStyle(.titleAndIcon) }
+                // Prominent only when it can be used: a disabled prominent button renders washed out.
+                if viewModel.selectedIdentity == nil || viewModel.postScanActivity != nil {
+                    scanButton.buttonStyle(.glass).disabled(true)
+                } else {
+                    scanButton.buttonStyle(.glassProminent)
+                }
+            }
+        }
     }
 
     private var sidebar: some View {
@@ -81,13 +133,7 @@ struct ContentView: View {
     }
 
     private var preview: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text("Pages").font(.title2.weight(.semibold))
-                Spacer()
-                if viewModel.pendingProcessingCount > 0 { ProgressView().controlSize(.small); Text("Processing \(viewModel.pendingProcessingCount)…").foregroundStyle(.secondary) }
-                Text("\(viewModel.pages.count) page\(viewModel.pages.count == 1 ? "" : "s")\(viewModel.hiddenBlankPageCount > 0 ? " · \(viewModel.hiddenBlankPageCount) blank hidden" : "")").foregroundStyle(.secondary)
-            }
+        Group {
             if viewModel.pages.isEmpty {
                 if viewModel.pendingProcessingCount > 0 {
                     ContentUnavailableView("Processing pages…", systemImage: "doc.viewfinder")
@@ -99,34 +145,45 @@ struct ContentView: View {
             } else {
                 pageGrid
             }
-            HStack {
-                Button { Task { await viewModel.rotateSelectedPage() } } label: { Label("Rotate", systemImage: "rotate.right") }.disabled(viewModel.selectedPageID == nil)
-                Button(role: .destructive) { Task { await viewModel.deleteSelectedPage() } } label: { Label("Delete", systemImage: "trash") }.disabled(viewModel.selectedPageID == nil)
-                Spacer()
-                Button { Task { await viewModel.clearPages() } } label: { Label("Clear", systemImage: "xmark.circle") }.disabled(viewModel.pages.isEmpty && viewModel.lastOutputs.isEmpty)
-            }
-            Divider()
-            HStack(spacing: 10) {
-                if let activity = viewModel.postScanActivity { PostScanActivityView(activity: activity) }
-                else if viewModel.isScanning { Button(role: .cancel) { Task { await viewModel.cancelScan() } } label: { Label("Cancel", systemImage: "xmark.circle") } }
-                else {
-                    Button { Task { await viewModel.startScan() } } label: {
-                        Label("Scan", systemImage: "scanner")
-                            .font(.title3.weight(.semibold))
-                            .frame(minWidth: 150, minHeight: 42)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(viewModel.selectedIdentity == nil)
-                }
-                Button { Task { await viewModel.saveExport() } } label: { Label("Save/Export", systemImage: "square.and.arrow.down") }.disabled(viewModel.pages.isEmpty || viewModel.isScanning)
-                Button { viewModel.revealInFinder() } label: { Label("Reveal in Finder", systemImage: "folder") }.disabled(viewModel.lastOutputs.isEmpty)
-                thumbnailSizeSlider
-                Spacer()
-                statusView
-            }
-        }.padding(22).frame(minWidth: 420, maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// One line at the bottom of the pages: what the app is doing at the
+    /// left, the page count and the thumbnail size at the right.
+    private var statusBar: some View {
+        HStack(spacing: 12) {
+            ActivityStatus(content: activity).layoutPriority(-1)
+            Spacer(minLength: 8)
+            Text("\(viewModel.pages.count) page\(viewModel.pages.count == 1 ? "" : "s")\(viewModel.hiddenBlankPageCount > 0 ? " · \(viewModel.hiddenBlankPageCount) blank hidden" : "")").foregroundStyle(.secondary).lineLimit(1)
+            thumbnailSizeSlider
+        }
+        .font(.callout)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 7)
+    }
+
+    /// The one place that says what the app is doing, from the scan to the
+    /// saved file. During an export it shows the same step, detail, progress
+    /// and elapsed time as `PostScanActivity` reports.
+    private var activity: ActivityStatus.Content {
+        if case let .scanning(progress, _) = viewModel.status {
+            return .init(symbol: "scanner", tint: .accentColor, title: Text(viewModel.status.displayText), fraction: progress, isWorking: true)
+        }
+        if viewModel.pendingProcessingCount > 0 {
+            return .init(symbol: "photo.on.rectangle", tint: .accentColor, title: Text("Processing \(viewModel.pendingProcessingCount)…"), isWorking: true)
+        }
+        if let activity = viewModel.postScanActivity {
+            return .init(symbol: activity.symbol, tint: .accentColor, title: Text(activity.title), detail: Text(activity.detail), fraction: activity.fraction, startedAt: activity.startedAt, isWorking: true)
+        }
+        if case let .error(message) = viewModel.status {
+            return .init(symbol: "exclamationmark.octagon.fill", tint: .red, title: Text(message))
+        }
+        if let first = viewModel.lastOutputs.first {
+            let files = viewModel.lastOutputs.count == 1 ? Text(first.lastPathComponent) : Text("Files: \(viewModel.lastOutputs.count)")
+            return .init(symbol: "checkmark.circle.fill", tint: .green, title: Text("Finished"), detail: files)
+        }
+        return .init(symbol: "scanner", tint: viewModel.status == .disconnected ? .secondary : .green, title: Text(viewModel.status.displayText), isEmphasized: false)
     }
 
     private var thumbnailSizeSlider: some View {
@@ -138,8 +195,8 @@ struct ContentView: View {
             Image(systemName: "photo").imageScale(.large).foregroundStyle(.secondary)
         }
         .labelsHidden()
-        .controlSize(.small)
-        .frame(width: 170)
+        .controlSize(.mini)
+        .frame(width: 130)
         .help("Thumbnail size")
         .accessibilityLabel("Thumbnail size")
     }
@@ -166,7 +223,7 @@ struct ContentView: View {
             ScrollView {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: thumbnailSize, maximum: thumbnailSize * 1.5), spacing: gridSpacing)], spacing: gridSpacing) {
                     ForEach(viewModel.pages) { page in
-                        PageThumbnail(page: page, selected: page.id == viewModel.selectedPageID, size: thumbnailSize)
+                        PageThumbnail(page: page, selected: page.id == viewModel.selectedPageID, size: thumbnailSize, progress: viewModel.pageProgress[page.id])
                             .id(page.id)
                             .onTapGesture { viewModel.selectedPageID = page.id; focusPages() }
                             .contextMenu {
@@ -176,7 +233,7 @@ struct ContentView: View {
                             }
                     }
                 }
-                .padding(.vertical, 4)
+                .padding(16)
                 .onGeometryChange(for: Double.self) { $0.size.width } action: { gridWidth = $0 }
                 // Empty space below the last row also belongs to the area.
                 .frame(maxWidth: .infinity, minHeight: 0, alignment: .top)
@@ -201,15 +258,8 @@ struct ContentView: View {
         }
     }
 
-    private var statusView: some View {
-        HStack(spacing: 8) {
-            switch viewModel.status { case let .scanning(progress, _): if let progress { ProgressView(value: progress).frame(width: 130) } else { ProgressView().controlSize(.small) }; default: EmptyView() }
-            Text(viewModel.status.displayText).font(.caption).foregroundStyle(statusColor).lineLimit(1)
-        }
-    }
-
     private var inspector: some View {
-        ScrollView { Form {
+        Form {
             Section("Profile") { Picker("Profile", selection: Binding(get: { viewModel.selectedProfile.id }, set: { id in viewModel.selectProfile(id: id) })) { ForEach(viewModel.profiles) { Text($0.name).tag($0.id) } }; TextField("Profile name", text: profileString(\.name)); Button("Duplicate profile") { viewModel.duplicateSelectedProfile() } }
             Section("Source") {
                 Picker("Source", selection: profile(\.options.acquisition.source)) { ForEach(ScanSource.allCases) { Text($0.rawValue).tag($0).disabled(!viewModel.isSupported($0)) } }.pickerStyle(.menu)
@@ -331,10 +381,10 @@ struct ContentView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                DisclosureGroup("Activity log", isExpanded: $viewModel.diagnosticsExpanded) { Button("Copy log") { viewModel.copyActivityLog() }; ScrollView { Text(viewModel.activityLog.reversed().joined(separator: "\n")).font(.caption.monospaced()).textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading) }.frame(minHeight: 100, maxHeight: 220) }
+                Button("Activity Log…") { showingActivityLog = true }
                 if !viewModel.lastOutputs.isEmpty { Text("Last export: \(ByteCountFormatter.string(fromByteCount: viewModel.lastOutputByteCount, countStyle: .file))").font(.caption) }
             }
-        }.formStyle(.grouped).padding(.horizontal, 8) }.frame(width: 370)
+        }.formStyle(.grouped)
     }
 
     private func profile<T>(_ keyPath: WritableKeyPath<ScanProfile, T>) -> Binding<T> { Binding(get: { viewModel.selectedProfile[keyPath: keyPath] }, set: { var p = viewModel.selectedProfile; p[keyPath: keyPath] = $0; viewModel.updateProfile(p) }) }
@@ -344,7 +394,6 @@ struct ContentView: View {
         let amount = viewModel.selectedProfile.options.processing.paperCleanup
         return amount == 0 ? "Off" : "\(Int((amount * 100).rounded()))%"
     }
-    private var statusColor: Color { switch viewModel.status { case .error: .red; case .scanning: .accentColor; case .idle: .green; case .disconnected: .secondary } }
 }
 
 private struct PageThumbnail: View {
@@ -352,6 +401,8 @@ private struct PageThumbnail: View {
     let selected: Bool
     /// Minimum width of the grid cell; the image height follows it.
     let size: Double
+    /// nil when the page is not part of an export.
+    let progress: ScannerWorkspaceViewModel.PageProgress?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -362,7 +413,19 @@ private struct PageThumbnail: View {
             } else {
                 Image(systemName: "photo").frame(maxWidth: .infinity, minHeight: size * 1.25)
             }
-            Text("Page \(page.pageIndex) · \(page.side.rawValue)").font(.caption).foregroundStyle(.secondary)
+            HStack(spacing: 5) {
+                Text("Page \(page.pageIndex) · \(page.side.rawValue)").font(.caption).foregroundStyle(.secondary)
+                switch progress {
+                case .readingText:
+                    ProgressView().controlSize(.mini).help("Reading text…").accessibilityLabel("Reading text…")
+                case .textRecognized:
+                    Image(systemName: "checkmark.circle.fill").font(.caption).foregroundStyle(.blue).help("Text recognized").accessibilityLabel("Text recognized")
+                case .fileFinished:
+                    Image(systemName: "checkmark.circle.fill").font(.caption).foregroundStyle(.green).help("File finished").accessibilityLabel("File finished")
+                case nil:
+                    EmptyView()
+                }
+            }
         }
         .padding(6)
         .background(selected ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.08))
@@ -375,31 +438,70 @@ private struct PageThumbnail: View {
 
 #Preview { ContentView() }
 
-/// Progress of the OCR and Apple Intelligence steps after a scan, shown
-/// where the Scan button normally is: what runs, a bar (indeterminate when
-/// the step cannot report progress), the current page or file, and the time
-/// since the export started.
-struct PostScanActivityView: View {
-    let activity: PostScanActivity
+/// The activity log in a sheet, opened from the inspector.
+private struct ActivityLogView: View {
+    let viewModel: ScannerWorkspaceViewModel
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Image(systemName: activity.symbol).foregroundStyle(.tint)
-                Text(activity.title).font(.callout.weight(.semibold)).lineLimit(1)
-                Spacer(minLength: 8)
-                Text(activity.startedAt, style: .timer).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Activity log").font(.headline)
+            ScrollView {
+                Text(viewModel.activityLog.reversed().joined(separator: "\n"))
+                    .font(.caption.monospaced())
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            if let fraction = activity.fraction {
-                ProgressView(value: fraction).progressViewStyle(.linear)
-            } else {
-                ProgressView().progressViewStyle(.linear)
+            HStack {
+                Button("Copy log") { viewModel.copyActivityLog() }
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
             }
-            Text(activity.detail).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
         }
-        .frame(width: 320)
-        .frame(minHeight: 42)
+        .padding(20)
+        .frame(width: 620, height: 420)
+    }
+}
+
+/// What the app is doing, at the left of the status line: a colored symbol
+/// that pulses while work goes on, the step, its detail, and during an export
+/// a small progress bar and the elapsed time.
+struct ActivityStatus: View {
+    struct Content {
+        var symbol: String
+        var tint: Color
+        var title: Text
+        var detail: Text? = nil
+        /// nil shows no bar.
+        var fraction: Double? = nil
+        var startedAt: Date? = nil
+        var isEmphasized = true
+        var isWorking = false
+    }
+
+    let content: Content
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: content.symbol)
+                .foregroundStyle(content.tint)
+                .symbolEffect(.pulse, isActive: content.isWorking)
+            content.title
+                .fontWeight(content.isEmphasized ? .medium : .regular)
+                .foregroundStyle(content.isEmphasized ? .primary : .secondary)
+                .lineLimit(1)
+                .layoutPriority(1)
+            if let detail = content.detail {
+                detail.foregroundStyle(.secondary).monospacedDigit().lineLimit(1).truncationMode(.middle)
+            }
+            if let fraction = content.fraction {
+                ProgressView(value: fraction).controlSize(.small).frame(width: 80)
+            }
+            if let startedAt = content.startedAt {
+                Text(startedAt, style: .timer).foregroundStyle(.secondary).monospacedDigit()
+            }
+        }
+        .help(content.detail ?? content.title)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(activity.title), \(activity.detail)")
     }
 }
