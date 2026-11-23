@@ -254,8 +254,8 @@ actor ScanPageStore {
 }
 
 /// Long-running work after the scanner has finished - text recognition,
-/// the Apple Intelligence filename and ocrmypdf - shown in place of the Scan
-/// button. `fraction` is nil when the step cannot report its progress.
+/// the Apple Intelligence filename and ocrmypdf - shown in the status line
+/// below the pages. `fraction` is nil when the step cannot report its progress.
 struct PostScanActivity: Equatable {
     var symbol: String
     var title: String
@@ -305,6 +305,9 @@ final class ScannerWorkspaceViewModel {
     var isRunningOCR = false
     /// Set while an export runs its OCR and AI steps; nil otherwise.
     private(set) var postScanActivity: PostScanActivity?
+    /// How far each page has got in the last export, shown on its thumbnail.
+    enum PageProgress { case readingText, textRecognized, fileFinished }
+    private(set) var pageProgress: [UUID: PageProgress] = [:]
     /// Scanner of the pages on screen, so an export is counted for it.
     private var lastScanScannerID: String?
     private let statisticsStore: ScanStatisticsStore
@@ -335,7 +338,6 @@ final class ScannerWorkspaceViewModel {
     var activityLog: [String] = []
     var isRefreshing = false
     var isScanning = false
-    var diagnosticsExpanded = false
     var isCancelRequested = false
     var epjitsuFirmwareFilename: String?
     var hardwareButtonSettings: HardwareButtonSettings
@@ -734,11 +736,20 @@ final class ScannerWorkspaceViewModel {
         await waitForProcessing()
         guard !pages.isEmpty else { status = .error(rawPages.isEmpty ? "There are no pages to export." : "Every page was found blank; turn off blank-page removal to export them."); return }
         let startedAt = Date()
-        outputWriter.onProgress = { [weak self] progress in self?.postScanActivity = .step(progress, startedAt: startedAt) }
+        let exported = pages
+        pageProgress = [:]
+        outputWriter.onProgress = { [weak self] progress in
+            self?.postScanActivity = .step(progress, startedAt: startedAt)
+            // Pages are written in order, so those before the current one have their text.
+            if case let .writingPage(page, _, true) = progress {
+                for (index, exportedPage) in exported.enumerated() where index < page { self?.pageProgress[exportedPage.id] = index < page - 1 ? .textRecognized : .readingText }
+            }
+        }
         defer { outputWriter.onProgress = nil; postScanActivity = nil }
-        do { let result = try await outputWriter.write(pages: pages, options: selectedProfile.options, destinationFolder: destinationOverride ?? destinationFolder, ocrLanguage: ocrSettings.language, people: ocrSettings.people); lastOutputs = result.outputURLs; lastOutputByteCount = result.outputByteCount; status = .idle; log("Exported \(result.pagesScanned) page\(result.pagesScanned == 1 ? "" : "s") (\(ByteCountFormatter.string(fromByteCount: result.outputByteCount, countStyle: .file)))."); await runOCRmyPDFIfEnabled(on: result.outputURLs, startedAt: startedAt); openInChosenApp(result.outputURLs)
+        do { let result = try await outputWriter.write(pages: pages, options: selectedProfile.options, destinationFolder: destinationOverride ?? destinationFolder, ocrLanguage: ocrSettings.language, people: ocrSettings.people); lastOutputs = result.outputURLs; lastOutputByteCount = result.outputByteCount; status = .idle; log("Exported \(result.pagesScanned) page\(result.pagesScanned == 1 ? "" : "s") (\(ByteCountFormatter.string(fromByteCount: result.outputByteCount, countStyle: .file)))."); for (id, progress) in pageProgress where progress == .readingText { pageProgress[id] = .textRecognized }; await runOCRmyPDFIfEnabled(on: result.outputURLs, startedAt: startedAt); openInChosenApp(result.outputURLs)
+            for page in exported { pageProgress[page.id] = .fileFinished }
             statisticsStore.append(ScanRecord(date: Date(), scannerID: lastScanScannerID ?? selectedIdentity?.id ?? "unknown", kind: .export, pages: result.pagesScanned, files: result.outputURLs.count, bytes: lastOutputByteCount)) }
-        catch { status = .error(error.localizedDescription); log("Export failed: \(error.localizedDescription)") }
+        catch { pageProgress = [:]; status = .error(error.localizedDescription); log("Export failed: \(error.localizedDescription)") }
     }
 
     /// Runs ocrmypdf on the exported PDFs when Settings ▸ Language enables it.
@@ -907,7 +918,7 @@ final class ScannerWorkspaceViewModel {
 
     private func resetPages() {
         processingGeneration += 1
-        rawPages = []; processedPages = [:]; pageEdits = [:]; blankPageIDs = []; selectedPageID = nil; pagesScanned = 0
+        rawPages = []; processedPages = [:]; pageEdits = [:]; blankPageIDs = []; selectedPageID = nil; pagesScanned = 0; pageProgress = [:]
     }
 
     /// Re-renders every page after the processing options changed. Debounced,
