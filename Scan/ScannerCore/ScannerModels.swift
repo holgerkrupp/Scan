@@ -66,12 +66,16 @@ nonisolated struct AcquisitionSettings: Hashable, Sendable, Codable {
     /// USB. The JPEG quality argument follows `ExportSettings.jpegQuality`.
     /// Only honoured by backends whose capabilities report `supportsHardwareCompression`.
     var hardwareCompression = false
+    /// Ask whether to go on when the feeder runs out or jams, so a long
+    /// document can be loaded in several stacks. Off, a jam saves the pages
+    /// scanned before it when the profile saves automatically.
+    var asksToContinueWhenFeederEmpties = false
 
-    init(source: ScanSource = .adfDuplex, colorMode: ScanColorMode = .color, resolutionDPI: Int = 300, scannerBuffering: Bool = false, hardwareCompression: Bool = false) {
-        self.source = source; self.colorMode = colorMode; self.resolutionDPI = resolutionDPI; self.scannerBuffering = scannerBuffering; self.hardwareCompression = hardwareCompression
+    init(source: ScanSource = .adfDuplex, colorMode: ScanColorMode = .color, resolutionDPI: Int = 300, scannerBuffering: Bool = false, hardwareCompression: Bool = false, asksToContinueWhenFeederEmpties: Bool = false) {
+        self.source = source; self.colorMode = colorMode; self.resolutionDPI = resolutionDPI; self.scannerBuffering = scannerBuffering; self.hardwareCompression = hardwareCompression; self.asksToContinueWhenFeederEmpties = asksToContinueWhenFeederEmpties
     }
 
-    private enum CodingKeys: String, CodingKey { case source, colorMode, resolutionDPI, scannerBuffering, hardwareCompression }
+    private enum CodingKeys: String, CodingKey { case source, colorMode, resolutionDPI, scannerBuffering, hardwareCompression, asksToContinueWhenFeederEmpties }
 
     // Profiles saved before `scannerBuffering` existed must keep decoding.
     init(from decoder: Decoder) throws {
@@ -81,6 +85,7 @@ nonisolated struct AcquisitionSettings: Hashable, Sendable, Codable {
         resolutionDPI = try container.decode(Int.self, forKey: .resolutionDPI)
         scannerBuffering = try container.decodeIfPresent(Bool.self, forKey: .scannerBuffering) ?? false
         hardwareCompression = try container.decodeIfPresent(Bool.self, forKey: .hardwareCompression) ?? false
+        asksToContinueWhenFeederEmpties = try container.decodeIfPresent(Bool.self, forKey: .asksToContinueWhenFeederEmpties) ?? false
     }
 }
 nonisolated struct ImageProcessingSettings: Hashable, Sendable, Codable {
@@ -257,7 +262,7 @@ nonisolated struct ScannerCapabilities: Equatable, Sendable, Codable {
 nonisolated enum PageSide: String, Sendable, Codable { case front, back, unknown }
 nonisolated enum PagePixelFormat: String, Sendable, Codable { case jpeg, png, tiff, rgb8, gray8, unknown }
 nonisolated struct PageFrame: Identifiable, Sendable, Codable { let id: UUID; let pageIndex: Int; let side: PageSide; let pixelFormat: PagePixelFormat; let width: Int; let height: Int; let resolutionDPI: Int; let data: Data; init(id: UUID = UUID(), pageIndex: Int, side: PageSide, pixelFormat: PagePixelFormat, width: Int, height: Int, resolutionDPI: Int, data: Data) { self.id = id; self.pageIndex = pageIndex; self.side = side; self.pixelFormat = pixelFormat; self.width = width; self.height = height; self.resolutionDPI = resolutionDPI; self.data = data } }
-nonisolated struct StoredPage: Identifiable, Sendable { let id: UUID; let pageIndex: Int; let side: PageSide; let pixelFormat: PagePixelFormat; let width: Int; let height: Int; let resolutionDPI: Int; let fileURL: URL; nonisolated init(frame: PageFrame, fileURL: URL) { id = frame.id; pageIndex = frame.pageIndex; side = frame.side; pixelFormat = frame.pixelFormat; width = frame.width; height = frame.height; resolutionDPI = frame.resolutionDPI; self.fileURL = fileURL } }
+nonisolated struct StoredPage: Identifiable, Sendable { let id: UUID; let pageIndex: Int; let side: PageSide; let pixelFormat: PagePixelFormat; let width: Int; let height: Int; let resolutionDPI: Int; var fileURL: URL; nonisolated init(frame: PageFrame, fileURL: URL) { id = frame.id; pageIndex = frame.pageIndex; side = frame.side; pixelFormat = frame.pixelFormat; width = frame.width; height = frame.height; resolutionDPI = frame.resolutionDPI; self.fileURL = fileURL } }
 
 nonisolated enum ScannerStatus: Equatable, Sendable {
     case disconnected, idle, scanning(progress: Double?, pagesScanned: Int), error(String)

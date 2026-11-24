@@ -110,6 +110,24 @@ final class ScanAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
+    /// Documents are finished in the background after a scan; quitting
+    /// waits for them, so their files get their text and final name.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        let workspace = ScannerWorkspaceViewModel.shared
+        guard workspace.exportsInProgress > 0 else { return .terminateNow }
+        let alert = NSAlert()
+        alert.messageText = String(localized: "Scan is still finishing documents")
+        alert.informativeText = String(localized: "Their files are saved, but their text and final name are still being added. Scan quits as soon as they are finished.")
+        alert.addButton(withTitle: String(localized: "Quit When Finished"))
+        alert.addButton(withTitle: String(localized: "Cancel"))
+        guard alert.runModal() == .alertFirstButtonReturn else { return .terminateCancel }
+        Task {
+            await workspace.waitForExports()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
     // AppKit declares these outside any actor but only calls them on the main thread.
     nonisolated override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool { true }
 

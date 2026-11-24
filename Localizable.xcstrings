@@ -13571,6 +13571,902 @@
           }
         }
       }
+    },
+    "Saving…": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Speichern …"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistrement…"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Guardando…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "저장 중…"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Opslaan…"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Salvataggio…"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Salvando…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存中…"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kaydediliyor…"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "جارٍ الحفظ…"
+          }
+        }
+      }
+    },
+    "Waiting: %lld": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In Warteschlange: %lld"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En attente : %lld"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En espera: %lld"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "대기 중: %lld"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wachtend: %lld"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In attesa: %lld"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aguardando: %lld"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "待機中:%lld"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bekleyen: %lld"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "في الانتظار: %lld"
+          }
+        }
+      }
+    },
+    "Scan is still finishing documents": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan stellt noch Dokumente fertig"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan termine encore des documents"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan aún está terminando documentos"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan이 아직 문서를 마무리하고 있습니다"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan maakt nog documenten af"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan sta ancora completando dei documenti"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O Scan ainda está concluindo documentos"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scanはまだ書類を仕上げています"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan hâlâ belgeleri tamamlıyor"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لا يزال Scan يُكمل بعض المستندات"
+          }
+        }
+      }
+    },
+    "Their files are saved, but their text and final name are still being added. Scan quits as soon as they are finished.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ihre Dateien sind gespeichert, aber Text und endgültiger Name werden noch hinzugefügt. Scan wird beendet, sobald sie fertig sind."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leurs fichiers sont enregistrés, mais leur texte et leur nom définitif sont encore en cours d'ajout. Scan quittera dès qu'ils seront terminés."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sus archivos están guardados, pero aún se están añadiendo su texto y su nombre definitivo. Scan se cerrará en cuanto estén terminados."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "파일은 저장되었지만 텍스트와 최종 이름을 아직 추가하고 있습니다. 완료되는 즉시 Scan이 종료됩니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De bestanden zijn opgeslagen, maar de tekst en de definitieve naam worden nog toegevoegd. Scan stopt zodra ze klaar zijn."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "I file sono salvati, ma il testo e il nome definitivo vengono ancora aggiunti. Scan si chiuderà non appena saranno completati."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Os arquivos estão salvos, mas o texto e o nome definitivo ainda estão sendo adicionados. O Scan será encerrado assim que forem concluídos."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ファイルは保存済みですが、テキストと最終的な名前をまだ追加しています。完了しだいScanを終了します。"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dosyaları kaydedildi, ancak metinleri ve son adları hâlâ ekleniyor. Tamamlanır tamamlanmaz Scan kapanacak."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تم حفظ ملفاتها، لكن لا تزال تتم إضافة نصها واسمها النهائي. سيتم إنهاء Scan فور اكتمالها."
+          }
+        }
+      }
+    },
+    "Quit When Finished": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nach Abschluss beenden"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitter une fois terminé"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Salir al terminar"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "완료 후 종료"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stop na afronden"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esci al termine"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Encerrar ao concluir"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "完了後に終了"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bitince Çık"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إنهاء عند الاكتمال"
+          }
+        }
+      }
+    },
+    "Add More Pages?": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weitere Seiten hinzufügen?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ajouter des pages ?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "¿Añadir más páginas?"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "페이지를 더 추가하시겠습니까?"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Meer pagina's toevoegen?"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aggiungere altre pagine?"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adicionar mais páginas?"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ページを追加しますか?"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daha fazla sayfa eklensin mi?"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "هل تريد إضافة صفحات أخرى؟"
+          }
+        }
+      }
+    },
+    "Scanning Paused": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scan angehalten"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Numérisation en pause"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Escaneado en pausa"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "스캔 일시 정지됨"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scannen gepauzeerd"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scansione in pausa"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Digitalização em pausa"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スキャンを一時停止中"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tarama duraklatıldı"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تم إيقاف المسح مؤقتًا"
+          }
+        }
+      }
+    },
+    "Scan More": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weiter scannen"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continuer"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Escanear más"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "계속 스캔"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Meer scannen"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scansiona altro"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Digitalizar mais"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "続けてスキャン"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daha Fazla Tara"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "مسح المزيد"
+          }
+        }
+      }
+    },
+    "Finish and Save": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beenden und speichern"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Terminer et enregistrer"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Terminar y guardar"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "마치고 저장"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voltooien en opslaan"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Termina e salva"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Concluir e salvar"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "終了して保存"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bitir ve Kaydet"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إنهاء وحفظ"
+          }
+        }
+      }
+    },
+    "Pages so far: %lld. Load more sheets and press the scanner's Scan button, or click Scan More, to add them to this document.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bisher %lld Seiten. Legen Sie weitere Blätter ein und drücken Sie die Scan-Taste des Scanners oder klicken Sie auf „Weiter scannen“, um sie diesem Dokument hinzuzufügen."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pages déjà numérisées : %lld. Chargez d'autres feuilles et appuyez sur le bouton du scanner, ou cliquez sur Continuer, pour les ajouter à ce document."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Páginas hasta ahora: %lld. Carga más hojas y pulsa el botón del escáner o haz clic en Escanear más para añadirlas a este documento."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "지금까지의 페이지: %lld. 이 문서에 추가하려면 용지를 더 넣고 스캐너의 Scan 버튼을 누르거나 계속 스캔을 클릭하십시오."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pagina's tot nu toe: %lld. Plaats meer vellen en druk op de Scan-knop van de scanner, of klik op Meer scannen, om ze aan dit document toe te voegen."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pagine finora: %lld. Carica altri fogli e premi il pulsante Scan dello scanner, oppure fai clic su Scansiona altro, per aggiungerli a questo documento."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Páginas até agora: %lld. Coloque mais folhas e pressione o botão Scan do scanner, ou clique em Digitalizar mais, para adicioná-las a este documento."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "現在のページ数: %lld。この書類に追加するには、用紙をセットしてスキャナのボタンを押すか、「続けてスキャン」をクリックしてください。"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Şu ana kadarki sayfalar: %lld. Bu belgeye eklemek için daha fazla kâğıt yerleştirip tarayıcının Scan düğmesine basın veya Daha Fazla Tara'ya tıklayın."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "الصفحات حتى الآن: %lld. ضع المزيد من الأوراق واضغط زر Scan في الماسح، أو انقر على مسح المزيد، لإضافتها إلى هذا المستند."
+          }
+        }
+      }
+    },
+    "%@\n\nPages so far: %lld. They are kept. Remove any stuck sheet, reload the remaining pages, then scan more.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@\n\nBisher %2$lld Seiten. Sie bleiben erhalten. Entfernen Sie gestaute Blätter, legen Sie die restlichen Seiten ein und scannen Sie weiter."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@\n\nPages déjà numérisées : %2$lld. Elles sont conservées. Retirez la feuille coincée, rechargez les pages restantes, puis cliquez sur Continuer."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@\n\nPáginas hasta ahora: %2$lld. Se conservan. Retira las hojas atascadas, vuelve a cargar las páginas restantes y sigue escaneando."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@\n\n지금까지의 페이지: %2$lld. 페이지는 보관됩니다. 걸린 용지를 빼고 남은 페이지를 다시 넣은 다음 계속 스캔하십시오."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@\n\nPagina's tot nu toe: %2$lld. Ze blijven bewaard. Verwijder vastgelopen vellen, plaats de resterende pagina's opnieuw en scan verder."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@\n\nPagine finora: %2$lld. Vengono conservate. Rimuovi eventuali fogli inceppati, ricarica le pagine rimanenti e continua la scansione."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@\n\nPáginas até agora: %2$lld. Elas são mantidas. Remova as folhas presas, coloque novamente as páginas restantes e continue digitalizando."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@\n\n現在のページ数: %2$lld。これらのページは保持されます。詰まった用紙を取り除き、残りのページをセットしてスキャンを続けてください。"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@\n\nŞu ana kadarki sayfalar: %2$lld. Saklanıyorlar. Sıkışan kâğıdı çıkarın, kalan sayfaları yeniden yerleştirin ve taramaya devam edin."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@\n\nالصفحات حتى الآن: %2$lld. يتم الاحتفاظ بها. أزل أي ورقة عالقة، وأعد وضع الصفحات المتبقية، ثم تابع المسح."
+          }
+        }
+      }
+    },
+    "Ask for more pages when the feeder is empty": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bei leerem Einzug nach weiteren Seiten fragen"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Proposer d'ajouter des pages quand le chargeur est vide"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Preguntar si hay más páginas cuando el alimentador esté vacío"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "급지기가 비면 페이지를 더 요청"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Om meer pagina's vragen als de invoer leeg is"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chiedi altre pagine quando l'alimentatore è vuoto"
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pedir mais páginas quando o alimentador estiver vazio"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フィーダーが空になったらページの追加を確認"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Besleyici boşaldığında daha fazla sayfa iste"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "طلب صفحات إضافية عند فراغ وحدة التغذية"
+          }
+        }
+      }
+    },
+    "Keeps the document open, also after a paper jam: load another stack and press the scanner's button, until you choose Finish and Save.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lässt das Dokument geöffnet, auch nach einem Papierstau: Legen Sie weitere Blätter ein und drücken Sie die Taste des Scanners, bis Sie „Beenden und speichern“ wählen."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Garde le document ouvert, même après un bourrage : chargez une autre pile et appuyez sur le bouton du scanner, jusqu'à choisir Terminer et enregistrer."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mantiene el documento abierto, también tras un atasco de papel: carga otra pila y pulsa el botón del escáner hasta que elijas Terminar y guardar."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "용지 걸림 후에도 문서를 열어 둡니다. 마치고 저장을 선택할 때까지 다른 묶음을 넣고 스캐너 버튼을 누르십시오."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Houdt het document open, ook na een papierstoring: plaats een nieuwe stapel en druk op de knop van de scanner, tot u Voltooien en opslaan kiest."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mantiene aperto il documento, anche dopo un inceppamento: carica un'altra pila e premi il pulsante dello scanner, finché non scegli Termina e salva."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mantém o documento aberto, também após um atolamento de papel: coloque outra pilha e pressione o botão do scanner, até escolher Concluir e salvar."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "紙詰まりの後も書類を開いたままにします。別の束をセットしてスキャナのボタンを押し、「終了して保存」を選択するまで続けられます。"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kâğıt sıkışmasından sonra da belgeyi açık tutar: Bitir ve Kaydet'i seçene kadar yeni bir deste yerleştirip tarayıcının düğmesine basın."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يُبقي المستند مفتوحًا، حتى بعد انحشار الورق: ضع رزمة أخرى واضغط زر الماسح، إلى أن تختار إنهاء وحفظ."
+          }
+        }
+      }
+    },
+    "The feeder is empty.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Einzug ist leer."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le chargeur est vide."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El alimentador está vacío."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "급지기가 비어 있습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De invoer is leeg."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'alimentatore è vuoto."
+          }
+        },
+        "pt": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O alimentador está vazio."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フィーダーは空です。"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Besleyici boş."
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "وحدة التغذية فارغة."
+          }
+        }
+      }
     }
   },
   "version": "1.3"

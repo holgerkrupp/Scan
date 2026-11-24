@@ -48,6 +48,16 @@ struct ContentView: View {
         .sheet(item: $scannerDetails) { details in
             ScannerDetailsView(details: details)
         }
+        .alert(viewModel.scanInterruption?.isEndOfStack == true ? "Add More Pages?" : "Scanning Paused", isPresented: Binding(get: { viewModel.scanInterruption != nil }, set: { _ in }), presenting: viewModel.scanInterruption) { _ in
+            Button("Scan More") { Task { await viewModel.startScan(continuing: true) } }
+            Button("Finish and Save") { Task { await viewModel.finishInterruptedScan() } }
+        } message: { interruption in
+            if interruption.isEndOfStack {
+                Text("Pages so far: \(viewModel.rawPages.count). Load more sheets and press the scanner's Scan button, or click Scan More, to add them to this document.")
+            } else {
+                Text("\(interruption.message)\n\nPages so far: \(viewModel.rawPages.count). They are kept. Remove any stuck sheet, reload the remaining pages, then scan more.")
+            }
+        }
         .frame(minWidth: 760, minHeight: 520)
     }
 
@@ -70,7 +80,7 @@ struct ContentView: View {
                 .disabled(viewModel.lastOutputs.isEmpty)
                 .help("Reveal in Finder")
             Button { Task { await viewModel.saveExport() } } label: { Label("Save/Export", systemImage: "square.and.arrow.down").labelStyle(.titleAndIcon) }
-                .disabled(viewModel.pages.isEmpty || viewModel.isScanning || viewModel.postScanActivity != nil)
+                .disabled(viewModel.pages.isEmpty || viewModel.isScanning || viewModel.isSavingShownPages)
         }
         ToolbarSpacer(.fixed, placement: .primaryAction)
         ToolbarItem(placement: .primaryAction) {
@@ -79,7 +89,7 @@ struct ContentView: View {
             } else {
                 let scanButton = Button { Task { await viewModel.startScan() } } label: { Label { Text("Scan") } icon: { Image("ScannerSheetFed").resizable().scaledToFit().frame(width: 17, height: 17) }.labelStyle(.titleAndIcon) }
                 // Prominent only when it can be used: a disabled prominent button renders washed out.
-                if viewModel.selectedIdentity == nil || viewModel.postScanActivity != nil {
+                if viewModel.selectedIdentity == nil {
                     scanButton.buttonStyle(.glass).disabled(true)
                 } else {
                     scanButton.buttonStyle(.glassProminent)
@@ -165,21 +175,26 @@ struct ContentView: View {
 
     /// The one place that says what the app is doing, from the scan to the
     /// saved file. During an export it shows the same step, detail, progress
-    /// and elapsed time as `PostScanActivity` reports.
+    /// and elapsed time as `PostScanActivity` reports, and how many other
+    /// documents are waiting to be finished.
     private var activity: ActivityStatus.Content {
+        let waiting = viewModel.exportsInProgress
         if case let .scanning(progress, _) = viewModel.status {
-            return .init(symbol: .scanner, tint: .accentColor, title: Text(viewModel.status.displayText), fraction: progress, isWorking: true)
+            return .init(symbol: .scanner, tint: .accentColor, title: Text(viewModel.status.displayText), fraction: progress, waiting: waiting, isWorking: true)
         }
         if viewModel.pendingProcessingCount > 0 {
-            return .init(symbol: .system("photo.on.rectangle"), tint: .accentColor, title: Text("Processing \(viewModel.pendingProcessingCount)…"), isWorking: true)
+            return .init(symbol: .system("photo.on.rectangle"), tint: .accentColor, title: Text("Processing \(viewModel.pendingProcessingCount)…"), waiting: waiting, isWorking: true)
+        }
+        if viewModel.isSavingPages {
+            return .init(symbol: .system("square.and.arrow.down"), tint: .accentColor, title: Text("Saving…"), waiting: waiting - 1, isWorking: true)
         }
         if let activity = viewModel.postScanActivity {
-            return .init(symbol: .system(activity.symbol), tint: .accentColor, title: Text(activity.title), detail: Text(activity.detail), fraction: activity.fraction, startedAt: activity.startedAt, isWorking: true)
+            return .init(symbol: .system(activity.symbol), tint: .accentColor, title: Text(activity.title), detail: Text(activity.detail), fraction: activity.fraction, startedAt: activity.startedAt, waiting: waiting - 1, isWorking: true)
         }
         if case let .error(message) = viewModel.status {
             return .init(symbol: .system("exclamationmark.octagon.fill"), tint: .red, title: Text(message))
         }
-        if let first = viewModel.lastOutputs.first {
+        if let first = viewModel.lastOutputs.first, !viewModel.isSavingShownPages {
             let files = viewModel.lastOutputs.count == 1 ? Text(first.lastPathComponent) : Text("Files: \(viewModel.lastOutputs.count)")
             return .init(symbol: .system("checkmark.circle.fill"), tint: .green, title: Text("Finished"), detail: files)
         }
@@ -267,6 +282,8 @@ struct ContentView: View {
                 Picker("DPI", selection: profile(\.options.acquisition.resolutionDPI)) { ForEach([75, 100, 150, 200, 300, 400, 600], id: \.self) { Text("\($0) dpi").tag($0).disabled(!viewModel.isSupported($0)) } }
                 if let capabilities = viewModel.capabilities { Text("Supported: \(capabilities.resolutions(for: viewModel.selectedProfile.options.source).map(String.init).joined(separator: ", ")) dpi").font(.caption).foregroundStyle(.secondary) }
                 else if viewModel.selectedIdentity?.connectionKind == .imageCapture { Text("Device capabilities are read when the Image Capture session opens.").font(.caption).foregroundStyle(.secondary) }
+                Toggle("Ask for more pages when the feeder is empty", isOn: profile(\.options.acquisition.asksToContinueWhenFeederEmpties))
+                if viewModel.selectedProfile.options.acquisition.asksToContinueWhenFeederEmpties { Text("Keeps the document open, also after a paper jam: load another stack and press the scanner's button, until you choose Finish and Save.").font(.caption).foregroundStyle(.secondary) }
                 capabilityToggle("Scanner buffering", value: profile(\.options.acquisition.scannerBuffering), supported: viewModel.capabilities?.supportsScannerBuffering ?? false, reason: "This scanner does not expose ADF read-ahead buffering.")
                 capabilityToggle("Hardware JPEG compression", value: profile(\.options.acquisition.hardwareCompression), supported: viewModel.capabilities?.supportsHardwareCompression ?? false, reason: "This scanner cannot compress pages itself.")
             }
@@ -478,6 +495,8 @@ struct ActivityStatus: View {
         /// nil shows no bar.
         var fraction: Double? = nil
         var startedAt: Date? = nil
+        /// Other documents still to be finished.
+        var waiting = 0
         var isEmphasized = true
         var isWorking = false
     }
@@ -503,6 +522,9 @@ struct ActivityStatus: View {
             }
             if let startedAt = content.startedAt {
                 Text(startedAt, style: .timer).foregroundStyle(.secondary).monospacedDigit()
+            }
+            if content.waiting > 0 {
+                Text("Waiting: \(content.waiting)").foregroundStyle(.secondary).lineLimit(1)
             }
         }
         .help(content.detail ?? content.title)

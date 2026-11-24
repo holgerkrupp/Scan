@@ -1,4 +1,6 @@
 import CoreGraphics
+import CoreText
+import PDFKit
 import XCTest
 @testable import Scan
 
@@ -136,8 +138,50 @@ final class WorkspaceProcessingTests: XCTestCase {
         workspace.updateProfile(profile)
         await settle(workspace)
 
-        await workspace.saveExport()
+        await workspace.saveExport()?.value
         XCTAssertEqual(workspace.lastOutputs.count, 1)
         XCTAssertEqual(CGPDFDocument(try XCTUnwrap(workspace.lastOutputs.first) as CFURL)?.numberOfPages, 1, "only the visible page")
+    }
+
+    /// The pages are saved before the export returns; their text follows in
+    /// the background, in the same file, even when the window is cleared meanwhile.
+    func testSavedDocumentGetsItsTextInTheBackground() async throws {
+        let workspace = makeWorkspace()
+        try await workspace.ingest(textFrame(index: 1, text: "INVOICE 2026"))
+        await workspace.waitForProcessing()
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("WorkspaceProcessingTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        workspace.destinationFolder = folder
+        var profile = workspace.selectedProfile
+        profile.options.export.outputFormat = .searchablePDF; profile.options.export.exportMode = .combinedPDF; profile.options.export.filenameTemplate = "Letter {date}"
+        workspace.updateProfile(profile)
+        await settle(workspace)
+
+        let queued = await workspace.saveExport()
+        let export = try XCTUnwrap(queued)
+        let saved = try XCTUnwrap(workspace.lastOutputs.first)
+        XCTAssertEqual(PDFDocument(url: saved)?.pageCount, 1, "the pages are on disk before their text is read")
+        XCTAssertFalse(PDFDocument(url: saved)?.string?.contains("INVOICE") == true)
+        XCTAssertTrue(workspace.isSavingShownPages)
+        await workspace.clearPages()
+
+        let result = await export.value
+        XCTAssertEqual(result.outputURLs, [saved], "the finished file takes the saved one's place")
+        XCTAssertTrue(PDFDocument(url: saved)?.string?.contains("INVOICE") == true)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), [saved.lastPathComponent])
+        XCTAssertEqual(workspace.exportsInProgress, 0)
+        XCTAssertTrue(workspace.lastOutputs.isEmpty, "a cleared window is not filled again")
+    }
+
+    private func textFrame(index: Int, text: String) throws -> PageFrame {
+        let width = 1240, height = 1754
+        let context = try XCTUnwrap(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        context.setFillColor(CGColor(gray: 1, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        let font = CTFontCreateWithName("Helvetica-Bold" as CFString, 80, nil)
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: CGColor(gray: 0, alpha: 1)]))
+        context.textPosition = CGPoint(x: 120, y: height - 300)
+        CTLineDraw(line, context)
+        let data = try ScanImageProcessor.encodeJPEG(try XCTUnwrap(context.makeImage()), quality: 0.95)
+        return PageFrame(pageIndex: index, side: .front, pixelFormat: .jpeg, width: width, height: height, resolutionDPI: 300, data: data)
     }
 }
