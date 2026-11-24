@@ -48,6 +48,16 @@ struct ContentView: View {
         .sheet(item: $scannerDetails) { details in
             ScannerDetailsView(details: details)
         }
+        .alert(viewModel.scanInterruption?.isEndOfStack == true ? "Add More Pages?" : "Scanning Paused", isPresented: Binding(get: { viewModel.scanInterruption != nil }, set: { _ in }), presenting: viewModel.scanInterruption) { _ in
+            Button("Scan More") { Task { await viewModel.startScan(continuing: true) } }
+            Button("Finish and Save") { Task { await viewModel.finishInterruptedScan() } }
+        } message: { interruption in
+            if interruption.isEndOfStack {
+                Text("Pages so far: \(viewModel.rawPages.count). Load more sheets and press the scanner's Scan button, or click Scan More, to add them to this document.")
+            } else {
+                Text("\(interruption.message)\n\nPages so far: \(viewModel.rawPages.count). They are kept. Remove any stuck sheet, reload the remaining pages, then scan more.")
+            }
+        }
         .frame(minWidth: 760, minHeight: 520)
     }
 
@@ -272,6 +282,8 @@ struct ContentView: View {
                 Picker("DPI", selection: profile(\.options.acquisition.resolutionDPI)) { ForEach([75, 100, 150, 200, 300, 400, 600], id: \.self) { Text("\($0) dpi").tag($0).disabled(!viewModel.isSupported($0)) } }
                 if let capabilities = viewModel.capabilities { Text("Supported: \(capabilities.resolutions(for: viewModel.selectedProfile.options.source).map(String.init).joined(separator: ", ")) dpi").font(.caption).foregroundStyle(.secondary) }
                 else if viewModel.selectedIdentity?.connectionKind == .imageCapture { Text("Device capabilities are read when the Image Capture session opens.").font(.caption).foregroundStyle(.secondary) }
+                Toggle("Ask for more pages when the feeder is empty", isOn: profile(\.options.acquisition.asksToContinueWhenFeederEmpties))
+                if viewModel.selectedProfile.options.acquisition.asksToContinueWhenFeederEmpties { Text("Keeps the document open, also after a paper jam: load another stack and press the scanner's button, until you choose Finish and Save.").font(.caption).foregroundStyle(.secondary) }
                 capabilityToggle("Scanner buffering", value: profile(\.options.acquisition.scannerBuffering), supported: viewModel.capabilities?.supportsScannerBuffering ?? false, reason: "This scanner does not expose ADF read-ahead buffering.")
                 capabilityToggle("Hardware JPEG compression", value: profile(\.options.acquisition.hardwareCompression), supported: viewModel.capabilities?.supportsHardwareCompression ?? false, reason: "This scanner cannot compress pages itself.")
             }

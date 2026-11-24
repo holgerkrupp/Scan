@@ -2,7 +2,8 @@ import AppKit
 import XCTest
 @testable import Scan
 
-/// The view model saves the pages scanned before a failure.
+/// The view model saves the pages scanned before a failure, or keeps them
+/// for more stacks when the profile asks for more pages.
 @MainActor
 final class PartialScanSaveTests: XCTestCase {
     private func makeWorkspace(driver: ScannerDriver) throws -> ScannerWorkspaceViewModel {
@@ -50,6 +51,48 @@ final class PartialScanSaveTests: XCTestCase {
         XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: destination.path).isEmpty)
         guard case .error = workspace.status else { return XCTFail("The jam must be shown") }
     }
+
+    func testAJamPausesTheDocumentWhenTheProfileAsksForMorePages() async throws {
+        let workspace = try makeWorkspace(driver: JammingDriver(pagesBeforeJam: 2))
+        var profile = workspace.selectedProfile
+        profile.options.acquisition.asksToContinueWhenFeederEmpties = true
+        profile.options.export.outputFormat = .pdf; profile.options.export.exportMode = .combinedPDF
+        workspace.updateProfile(profile)
+        workspace.selectedIdentity = JamDiscovery.scanner
+        let destination = try makeDestination()
+
+        await workspace.startScan(destinationOverride: destination)
+        XCTAssertEqual(workspace.scanInterruption?.isEndOfStack, false, "the jam pauses the document")
+        XCTAssertEqual(workspace.rawPages.count, 2)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: destination.path).isEmpty, "nothing is saved half done")
+
+        await workspace.startScan(continuing: true)
+        XCTAssertEqual(workspace.rawPages.map(\.pageIndex), [1, 2, 3, 4], "the next stack follows the pages already there")
+        XCTAssertNotNil(workspace.scanInterruption)
+
+        await workspace.finishInterruptedScan()
+        await workspace.waitForExports()
+        XCTAssertNil(workspace.scanInterruption)
+        let saved = try XCTUnwrap(workspace.lastOutputs.first)
+        XCTAssertEqual(saved.deletingLastPathComponent().standardizedFileURL, destination.standardizedFileURL, "the document goes where the scan was going")
+        XCTAssertEqual(CGPDFDocument(saved as CFURL)?.numberOfPages, 4)
+    }
+
+    func testAnEmptyFeederAsksForMorePagesInsteadOfSaving() async throws {
+        let workspace = try makeWorkspace(driver: JammingDriver(pagesBeforeJam: 1, jams: false))
+        var profile = workspace.selectedProfile
+        profile.options.acquisition.asksToContinueWhenFeederEmpties = true
+        workspace.updateProfile(profile)
+        let destination = try makeDestination()
+
+        do {
+            _ = try await workspace.scanAndExport(identity: JamDiscovery.scanner, destinationOverride: destination)
+            XCTFail("A paused document is not exported from here")
+        } catch {}
+        XCTAssertEqual(workspace.scanInterruption?.isEndOfStack, true)
+        XCTAssertEqual(workspace.rawPages.count, 1)
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: destination.path).isEmpty)
+    }
 }
 
 private struct JamDiscovery: ScannerDiscovery {
@@ -61,18 +104,20 @@ private final class JammingDriver: ScannerDriver {
     let name = "Jamming test driver"
     let supportedUSBDeviceIDs: Set<USBDeviceID> = []
     let pagesBeforeJam: Int
-    init(pagesBeforeJam: Int) { self.pagesBeforeJam = pagesBeforeJam }
+    let jams: Bool
+    init(pagesBeforeJam: Int, jams: Bool = true) { self.pagesBeforeJam = pagesBeforeJam; self.jams = jams }
     func canDrive(_ identity: ScannerIdentity) -> Bool { true }
-    func makeDevice(identity: ScannerIdentity, transport: USBDeviceTransport?) -> ScannerDevice { JammingDevice(identity: identity, pages: pagesBeforeJam) }
+    func makeDevice(identity: ScannerIdentity, transport: USBDeviceTransport?) -> ScannerDevice { JammingDevice(identity: identity, pages: pagesBeforeJam, jams: jams) }
 }
 
-/// Delivers `pages` printed pages, then fails like a paper jam.
+/// Delivers `pages` printed pages, then fails like a paper jam, or ends like an empty feeder.
 private final class JammingDevice: ScannerDevice {
     let identity: ScannerIdentity
     let capabilities = ScannerCapabilities(sources: ScanSource.allCases, colorModes: ScanColorMode.allCases, resolutionsDPI: [150, 300, 600], supportsDuplex: true)
     let status: ScannerStatus = .idle
     private let pages: Int
-    init(identity: ScannerIdentity, pages: Int) { self.identity = identity; self.pages = pages }
+    private let jams: Bool
+    init(identity: ScannerIdentity, pages: Int, jams: Bool) { self.identity = identity; self.pages = pages; self.jams = jams }
     func open() async throws {}
     func close() async {}
     func cancel() async {}
@@ -80,7 +125,7 @@ private final class JammingDevice: ScannerDevice {
         let frames = try (1...pages).map(Self.printedFrame)
         return AsyncThrowingStream { continuation in
             frames.forEach { continuation.yield($0) }
-            continuation.finish(throwing: ScannerError.transportUnavailable("Paper jam."))
+            continuation.finish(throwing: jams ? ScannerError.transportUnavailable("Paper jam.") : nil)
         }
     }
 
