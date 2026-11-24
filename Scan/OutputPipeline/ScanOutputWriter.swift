@@ -47,10 +47,13 @@ final class ScanOutputWriter {
     /// stay resident. This is the workspace's path: the pages are already
     /// processed renditions, so only the output resolution and compression are
     /// applied here and the export matches what the grid shows.
-    func write(pages: [StoredPage], options: ScanOptions, destinationFolder: URL, ocrLanguage: OCRLanguage = .german, people: String = "") async throws -> ScanJobResult {
+    /// A given `naming` skips reading the document for its name and reports no
+    /// progress: the quick save before the export in the background uses it.
+    func write(pages: [StoredPage], options: ScanOptions, destinationFolder: URL, ocrLanguage: OCRLanguage = .german, people: String = "", date: Date = Date(), naming: DocumentNaming? = nil) async throws -> ScanJobResult {
         try FileManager.default.createDirectory(at: destinationFolder, withIntermediateDirectories: true)
-        let date = Date()
-        let documentName = await documentNaming(for: options.export.filenameTemplate, language: ocrLanguage, people: people, frames: pages.map { page in { try self.process(page, options: options) } })
+        let onProgress = naming == nil ? self.onProgress : nil
+        let documentName: DocumentNaming
+        if let naming { documentName = naming } else { documentName = await documentNaming(for: options.export.filenameTemplate, language: ocrLanguage, people: people, frames: pages.map { page in { try self.process(page, options: options) } }) }
         if (options.export.outputFormat == .pdf || options.export.outputFormat == .searchablePDF) && options.export.exportMode == .combinedPDF {
             let url = uniqueURL(folder: destinationFolder, name: Self.renderName(options.export, date: date, naming: documentName, page: nil, side: nil), ext: "pdf")
             guard let consumer = CGDataConsumer(url: url as CFURL), let context = CGContext(consumer: consumer, mediaBox: nil, nil) else { throw ScannerError.outputFailed("Could not write PDF to \(url.path).") }
@@ -106,6 +109,45 @@ final class ScanOutputWriter {
         }
         guard count > 0 else { throw ScannerError.outputFailed("No non-blank pages were received from the scanner.") }
         return ScanJobResult(outputURLs: urls, pagesScanned: count, outputByteCount: bytes)
+    }
+
+    /// Hard links the page files into a private folder, so a new scan or
+    /// Clear cannot take them away from an export that is still running.
+    static func snapshot(_ pages: [StoredPage]) throws -> (pages: [StoredPage], folder: URL) {
+        let manager = FileManager.default
+        let folder = manager.temporaryDirectory.appendingPathComponent("Scan-Export-\(UUID().uuidString)", isDirectory: true)
+        try manager.createDirectory(at: folder, withIntermediateDirectories: true)
+        let copies = try pages.enumerated().map { index, page in
+            let url = folder.appendingPathComponent("\(index)-\(page.fileURL.lastPathComponent)")
+            do { try manager.linkItem(at: page.fileURL, to: url) } catch { try manager.copyItem(at: page.fileURL, to: url) }
+            var copy = page
+            copy.fileURL = url
+            return copy
+        }
+        return (copies, folder)
+    }
+
+    /// Puts each finished file in place of the quickly saved one, in the same
+    /// order, under the finished name; a file keeps its place when the name
+    /// did not change. Returns where the files are now.
+    func replace(_ saved: [URL], with finished: [URL]) throws -> [URL] {
+        let finishedNames = Set(finished.map(\.lastPathComponent))
+        return try zip(saved, finished).map { saved, finished in
+            let folder = saved.deletingLastPathComponent(), ext = finished.pathExtension
+            var name = finished.deletingPathExtension().lastPathComponent
+            // "Letter-2" is this document's second "Letter": it is numbered after the files already there.
+            if let match = name.wholeMatch(of: /(.+)-\d+/), finishedNames.contains("\(match.1).\(ext)") { name = String(match.1) }
+            var target = folder.appendingPathComponent("\(name).\(ext)"); var counter = 2
+            // The saved file does not count as taken: it is the one being replaced.
+            while target != saved, FileManager.default.fileExists(atPath: target.path) { target = folder.appendingPathComponent("\(name)-\(counter).\(ext)"); counter += 1 }
+            if target == saved {
+                _ = try FileManager.default.replaceItemAt(saved, withItemAt: finished)
+            } else {
+                try FileManager.default.moveItem(at: finished, to: target)
+                try? FileManager.default.removeItem(at: saved)
+            }
+            return target
+        }
     }
 
     /// The pages grouped by sheet: a front starts a sheet and the back right

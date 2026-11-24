@@ -308,6 +308,19 @@ final class ScannerWorkspaceViewModel {
     /// How far each page has got in the last export, shown on its thumbnail.
     enum PageProgress { case readingText, textRecognized, fileFinished }
     private(set) var pageProgress: [UUID: PageProgress] = [:]
+    /// Exports waiting or running behind the scanner, oldest first, each
+    /// with the page session it saves. The next scan does not wait for them.
+    private(set) var exportSessions: [Int] = []
+    /// True while the pages are being saved, before they can be finished in the background.
+    private(set) var isSavingPages = false
+    var exportsInProgress: Int { exportSessions.count }
+    /// True while the pages on screen are being saved, so they are not saved twice.
+    var isSavingShownPages: Bool { exportSessions.contains(pageSession) }
+    private var exportQueue: Task<Void, Never>?
+    /// The latest queued export, so an automation can wait for its own files.
+    private var latestExport: (session: Int, task: Task<ScanJobResult, Never>)?
+    /// Changes whenever the pages on screen are replaced or cleared.
+    private var pageSession = 0
     /// Scanner of the pages on screen, so an export is counted for it.
     private var lastScanScannerID: String?
     private let statisticsStore: ScanStatisticsStore
@@ -679,7 +692,8 @@ final class ScannerWorkspaceViewModel {
             return
         }
         await waitForProcessing()
-        await saveExport(destinationOverride: destinationOverride)
+        // Waits for the final file name, which the message gives.
+        _ = await saveExport(destinationOverride: destinationOverride)?.value
         if lastOutputs.isEmpty {
             status = .error(message)
         } else {
@@ -709,20 +723,23 @@ final class ScannerWorkspaceViewModel {
         if case let .error(message) = status { throw ScannerError.outputFailed(message) }
         guard !pages.isEmpty else { throw ScannerError.feederEmpty }
 
-        if lastOutputs.isEmpty {
-            await saveExport(destinationOverride: destinationOverride)
+        // This scan's own files, with their final names; the scanner is free again meanwhile.
+        let session = pageSession
+        var export = latestExport?.session == session ? latestExport?.task : nil
+        if export == nil { export = await saveExport(destinationOverride: destinationOverride) }
+        if let export {
+            let result = await export.value
+            if session == pageSession, case let .error(message) = status { throw ScannerError.outputFailed(message) }
+            if !result.outputURLs.isEmpty { return result }
         }
         if case let .error(message) = status { throw ScannerError.outputFailed(message) }
-        guard !lastOutputs.isEmpty else {
-            throw ScannerError.outputFailed("The scan finished without creating an output file.")
-        }
-        return ScanJobResult(outputURLs: lastOutputs, pagesScanned: pages.count, outputByteCount: lastOutputByteCount)
+        throw ScannerError.outputFailed("The scan finished without creating an output file.")
     }
 
     /// The exported filename shown next to the window title, but only when
     /// Apple Intelligence filled the template's `{name}` token.
     var aiFilenameSubtitle: String? {
-        guard selectedProfile.options.export.filenameTemplate.contains("{name}"),
+        guard selectedProfile.options.export.filenameTemplate.contains("{name}"), !isSavingShownPages,
               FoundationModelNameSuggester.unavailableReason == nil,
               let first = lastOutputs.first else { return nil }
         return lastOutputs.count > 1 ? "\(first.lastPathComponent) (+\(lastOutputs.count - 1))" : first.lastPathComponent
@@ -732,11 +749,64 @@ final class ScannerWorkspaceViewModel {
         guard isScanning else { return }; isCancelRequested = true; await activeDevice?.cancel(); activeDevice = nil; status = .idle; isScanning = false; log("Scan cancellation requested; partial pages are retained.")
     }
 
-    func saveExport(destinationOverride: URL? = nil) async {
+    /// Saves the pages on screen at once, then queues the slow part: the text
+    /// layer, the name read from the document, ocrmypdf and the app that
+    /// opens the files. Documents are finished one after another behind the
+    /// scanner, so the next scan can start right away; the returned task
+    /// gives this document's final files.
+    @discardableResult
+    func saveExport(destinationOverride: URL? = nil) async -> Task<ScanJobResult, Never>? {
         await waitForProcessing()
-        guard !pages.isEmpty else { status = .error(rawPages.isEmpty ? "There are no pages to export." : "Every page was found blank; turn off blank-page removal to export them."); return }
+        guard !pages.isEmpty else { status = .error(rawPages.isEmpty ? "There are no pages to export." : "Every page was found blank; turn off blank-page removal to export them."); return nil }
+        let session = pageSession, options = selectedProfile.options, folder = destinationOverride ?? destinationFolder
+        let scannerID = lastScanScannerID ?? selectedIdentity?.id ?? "unknown"
+        let date = Date()
+        // Only these two need the document's text, which takes a while.
+        let template = options.export.filenameTemplate
+        let readsText = options.export.outputFormat == .searchablePDF || template.contains("{name}") || ScanOutputWriter.analysisTokens.contains(where: template.contains)
+        var quick = options
+        if quick.export.outputFormat == .searchablePDF { quick.export.outputFormat = .pdf }
+        exportSessions.append(session)
+        isSavingPages = true
+        let snapshot: (pages: [StoredPage], folder: URL)
+        let saved: ScanJobResult
+        do {
+            // The next scan or Clear removes the page files; the export keeps its own links to them.
+            snapshot = try ScanOutputWriter.snapshot(pages)
+            do { saved = try await outputWriter.write(pages: snapshot.pages, options: quick, destinationFolder: folder, ocrLanguage: ocrSettings.language, people: ocrSettings.people, date: date, naming: DocumentNaming()) }
+            catch { try? FileManager.default.removeItem(at: snapshot.folder); throw error }
+        } catch {
+            isSavingPages = false
+            if let index = exportSessions.lastIndex(of: session) { exportSessions.remove(at: index) }
+            status = .error(error.localizedDescription); log("Export failed: \(error.localizedDescription)")
+            return nil
+        }
+        isSavingPages = false
+        lastOutputs = saved.outputURLs; lastOutputByteCount = saved.outputByteCount; status = .idle
+        log("Saved \(saved.pagesScanned) page\(saved.pagesScanned == 1 ? "" : "s") (\(ByteCountFormatter.string(fromByteCount: saved.outputByteCount, countStyle: .file)))\(readsText ? "; the text and the name follow" : "").")
+        let previous = exportQueue
+        let task = Task {
+            await previous?.value
+            defer { try? FileManager.default.removeItem(at: snapshot.folder); if let index = exportSessions.firstIndex(of: session) { exportSessions.remove(at: index) } }
+            return await finishExport(saved, pages: snapshot.pages, options: options, readsText: readsText, date: date, session: session, scannerID: scannerID)
+        }
+        exportQueue = Task { _ = await task.value }
+        latestExport = (session, task)
+        return task
+    }
+
+    /// Waits until every queued document is finished.
+    func waitForExports() async {
+        while !exportSessions.isEmpty, let queue = exportQueue { await queue.value }
+    }
+
+    /// Writes the document again with its text and name, puts those files in
+    /// place of the saved ones, then runs ocrmypdf and opens the files. The
+    /// saved files stay as they are when a step fails. Only the export of
+    /// the pages still on screen updates the window.
+    private func finishExport(_ saved: ScanJobResult, pages exported: [StoredPage], options: ScanOptions, readsText: Bool, date: Date, session: Int, scannerID: String) async -> ScanJobResult {
         let startedAt = Date()
-        let exported = pages
+        var outputs = saved.outputURLs
         pageProgress = [:]
         outputWriter.onProgress = { [weak self] progress in
             self?.postScanActivity = .step(progress, startedAt: startedAt)
@@ -746,10 +816,30 @@ final class ScannerWorkspaceViewModel {
             }
         }
         defer { outputWriter.onProgress = nil; postScanActivity = nil }
-        do { let result = try await outputWriter.write(pages: pages, options: selectedProfile.options, destinationFolder: destinationOverride ?? destinationFolder, ocrLanguage: ocrSettings.language, people: ocrSettings.people); lastOutputs = result.outputURLs; lastOutputByteCount = result.outputByteCount; status = .idle; log("Exported \(result.pagesScanned) page\(result.pagesScanned == 1 ? "" : "s") (\(ByteCountFormatter.string(fromByteCount: result.outputByteCount, countStyle: .file)))."); for (id, progress) in pageProgress where progress == .readingText { pageProgress[id] = .textRecognized }; await runOCRmyPDFIfEnabled(on: result.outputURLs, startedAt: startedAt); openInChosenApp(result.outputURLs)
-            for page in exported { pageProgress[page.id] = .fileFinished }
-            statisticsStore.append(ScanRecord(date: Date(), scannerID: lastScanScannerID ?? selectedIdentity?.id ?? "unknown", kind: .export, pages: result.pagesScanned, files: result.outputURLs.count, bytes: lastOutputByteCount)) }
-        catch { pageProgress = [:]; status = .error(error.localizedDescription); log("Export failed: \(error.localizedDescription)") }
+        if readsText, let folder = outputs.first?.deletingLastPathComponent() {
+            do {
+                // A folder on the same volume, so the finished files move into place without a copy.
+                let staging = try FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: folder, create: true)
+                defer { try? FileManager.default.removeItem(at: staging) }
+                let finished = try await outputWriter.write(pages: exported, options: options, destinationFolder: staging, ocrLanguage: ocrSettings.language, people: ocrSettings.people, date: date)
+                guard finished.outputURLs.count == outputs.count else { throw ScannerError.outputFailed("The finished export has \(finished.outputURLs.count) files instead of \(outputs.count).") }
+                outputs = try outputWriter.replace(outputs, with: finished.outputURLs)
+                log("Finished \(outputs.map(\.lastPathComponent).joined(separator: ", ")).")
+            } catch {
+                for page in exported { pageProgress[page.id] = nil }
+                log("Could not add the text and the name; the files are saved without them: \(error.localizedDescription)")
+                if session == pageSession { status = .error(error.localizedDescription) }
+            }
+        }
+        for (id, progress) in pageProgress where progress == .readingText { pageProgress[id] = .textRecognized }
+        if session == pageSession { lastOutputs = outputs }
+        await runOCRmyPDFIfEnabled(on: outputs, startedAt: startedAt)
+        openInChosenApp(outputs)
+        for page in exported { pageProgress[page.id] = .fileFinished }
+        let bytes = outputs.reduce(Int64(0)) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0) }
+        if session == pageSession { lastOutputByteCount = bytes }
+        statisticsStore.append(ScanRecord(date: Date(), scannerID: scannerID, kind: .export, pages: saved.pagesScanned, files: outputs.count, bytes: bytes))
+        return ScanJobResult(outputURLs: outputs, pagesScanned: saved.pagesScanned, outputByteCount: bytes)
     }
 
     /// Runs ocrmypdf on the exported PDFs when Settings ▸ Language enables it.
@@ -793,7 +883,6 @@ final class ScannerWorkspaceViewModel {
                 log("Apple Live Text did not respond, as happens while macOS prepares its text recognition models; using Tesseract instead.")
                 processed = try await runner.process(pdfs, language: language, usesAppleOCR: false, onFile: onFile)
             }
-            lastOutputByteCount = outputs.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { Int64($0) } ?? 0) }
             log("OCR finished for \(processed.map(\.lastPathComponent).joined(separator: ", ")).")
         } catch {
             status = .error(error.localizedDescription)
@@ -917,7 +1006,7 @@ final class ScannerWorkspaceViewModel {
     }
 
     private func resetPages() {
-        processingGeneration += 1
+        processingGeneration += 1; pageSession += 1
         rawPages = []; processedPages = [:]; pageEdits = [:]; blankPageIDs = []; selectedPageID = nil; pagesScanned = 0; pageProgress = [:]
     }
 
