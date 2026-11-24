@@ -59,6 +59,18 @@ final class ScanCoreTests: XCTestCase {
         XCTAssertEqual(options.export.outputDPI, 300)
     }
 
+    /// The Fujitsu drivers list color, gray and lineart but not Automatic,
+    /// which scans in color: selecting such a scanner must keep the mode (#57).
+    func testSelectingAScannerKeepsAnAutomaticColorProfile() throws {
+        let viewModel = try makeViewModel(discovery: StaticDiscovery([]))
+        var profile = viewModel.selectedProfile
+        profile.options.acquisition.colorMode = .automatic
+        viewModel.updateProfile(profile)
+        viewModel.selectedIdentity = usbIdentity(0x11a2)
+        XCTAssertEqual(viewModel.capabilities?.colorModes.contains(.automatic), false)
+        XCTAssertEqual(viewModel.selectedProfile.options.acquisition.colorMode, .automatic)
+    }
+
     func testNewInstallationsStartWithTheDocumentsProfile() {
         let defaults = UserDefaults(suiteName: "DocumentsProfile-\(UUID().uuidString)")!
         let profiles = ScanProfileStore(defaults: defaults).load()

@@ -1021,7 +1021,7 @@ final class ScannerWorkspaceViewModel {
     private func reconcileProfile(using capabilities: ScannerCapabilities) {
         var profile = selectedProfile
         if !capabilities.sources.contains(profile.options.source), let first = capabilities.sources.first { profile.options.source = first }
-        if !capabilities.colorModes.contains(profile.options.colorMode), let first = capabilities.colorModes.first { profile.options.colorMode = first }
+        if !capabilities.supports(profile.options.colorMode), let first = capabilities.colorModes.first { profile.options.colorMode = first }
         let sourceResolutions = capabilities.resolutions(for: profile.options.source)
         if !sourceResolutions.contains(profile.options.resolutionDPI), let nearest = sourceResolutions.min(by: { abs($0 - profile.options.resolutionDPI) < abs($1 - profile.options.resolutionDPI) }) { profile.options.resolutionDPI = nearest }
         if !capabilities.outputFormats.contains(profile.options.outputFormat), let first = capabilities.outputFormats.first { profile.options.outputFormat = first }
