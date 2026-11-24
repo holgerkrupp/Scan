@@ -46,7 +46,7 @@ struct ScanApp: App {
                     Task { await workspace.saveExport() }
                 }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
-                .disabled(workspace.pages.isEmpty || workspace.isScanning)
+                .disabled(workspace.pages.isEmpty || workspace.isScanning || workspace.isSavingShownPages)
 
                 Divider()
 

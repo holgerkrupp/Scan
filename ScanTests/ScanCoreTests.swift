@@ -223,6 +223,33 @@ final class ScanCoreTests: XCTestCase {
         options.export.exportMode = .separateFiles; let second = try await writer.write(frames: [frames[0]], options: options, destinationFolder: folder); XCTAssertEqual(second.outputURLs.count, 1); XCTAssertNotEqual(first.outputURLs[0].lastPathComponent, second.outputURLs[0].lastPathComponent)
     }
 
+    /// The finished files of a document take the place of its saved ones; a
+    /// name that did not change keeps the place, also next to another document.
+    func testFinishedFilesReplaceTheSavedOnes() throws {
+        let manager = FileManager.default
+        let folder = manager.temporaryDirectory.appendingPathComponent("FinishedFiles-\(UUID().uuidString)", isDirectory: true)
+        let staging = folder.appendingPathComponent(".staging", isDirectory: true)
+        try manager.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? manager.removeItem(at: folder) }
+        func file(_ url: URL, _ text: String) throws -> URL { try Data(text.utf8).write(to: url); return url }
+        _ = try file(folder.appendingPathComponent("Letter.pdf"), "other document")
+        let saved = [try file(folder.appendingPathComponent("Letter-2.pdf"), "saved"), try file(folder.appendingPathComponent("Scan.pdf"), "saved")]
+        let finished = [try file(staging.appendingPathComponent("Letter.pdf"), "finished 1"), try file(staging.appendingPathComponent("Invoice.pdf"), "finished 2")]
+
+        let result = try ScanOutputWriter().replace(saved, with: finished)
+
+        XCTAssertEqual(result.map(\.lastPathComponent), ["Letter-2.pdf", "Invoice.pdf"])
+        XCTAssertEqual(try String(contentsOf: result[0], encoding: .utf8), "finished 1")
+        XCTAssertEqual(try String(contentsOf: result[1], encoding: .utf8), "finished 2")
+        XCTAssertEqual(try String(contentsOf: folder.appendingPathComponent("Letter.pdf"), encoding: .utf8), "other document")
+        XCTAssertFalse(manager.fileExists(atPath: saved[1].path))
+
+        // A second batch named like the first: its files are numbered after those already there.
+        let second = [try file(folder.appendingPathComponent("Scan-2.pdf"), "saved"), try file(folder.appendingPathComponent("Scan-3.pdf"), "saved")]
+        let renamed = [try file(staging.appendingPathComponent("Invoice.pdf"), "page 1"), try file(staging.appendingPathComponent("Invoice-2.pdf"), "page 2")]
+        XCTAssertEqual(try ScanOutputWriter().replace(second, with: renamed).map(\.lastPathComponent), ["Invoice-2.pdf", "Invoice-3.pdf"])
+    }
+
     func testPagesAreGroupedBySheet() {
         let sides: [PageSide] = [.front, .back, .front, .front, .back, .back]
         XCTAssertEqual(ScanOutputWriter.sheets(Array(sides.indices), side: { sides[$0] }), [[0, 1], [2], [3, 4], [5]])
